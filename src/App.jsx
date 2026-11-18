@@ -1,10 +1,9 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import SwipeCard from './components/SwipeCard.jsx';
 import {
   GOALS,
   GAME_OVER_AT,
   LOW_HEALTH,
-  SLEEP_THRESHOLD,
   STAT_META,
   isUnderSlept,
   createInitialStats,
@@ -15,6 +14,8 @@ import {
   formatFlow,
   money,
 } from './decisions.js';
+
+const TOAST_MS = 3200;
 
 function Stat({ label, value, align = 'left', onClick, sub, tone }) {
   const Tag = onClick ? 'button' : 'div';
@@ -44,15 +45,47 @@ function Ledger({ ledger }) {
   );
 }
 
+// What happened last turn. Floats over the card so it never pushes the layout around.
+function Toast({ last, onClose }) {
+  useEffect(() => {
+    const t = setTimeout(onClose, TOAST_MS);
+    return () => clearTimeout(t);
+  }, [last, onClose]);
+
+  return (
+    <button type="button" className="toast" onClick={onClose} aria-live="polite">
+      {last.goalMsg && <p className="goal-msg">{last.goalMsg}</p>}
+      <p>{last.outcome}</p>
+      <Ledger ledger={last.ledger} />
+      {last.healthDelta < 0 && <p className="health-msg">😴 Under-slept: health {last.healthDelta}</p>}
+    </button>
+  );
+}
+
 function newGame() {
   const stats = createInitialStats();
-  return { stats, card: drawCard(stats), turn: 0, last: null, status: 'playing', lostTo: null };
+  const game = { stats, card: drawCard(stats), turn: 0, last: null, status: 'playing', lostTo: null };
+  // Dev only: add ?stress to the URL to see the busiest screen (debt, under-slept,
+  // outcome toast showing) for layout testing.
+  if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('stress')) {
+    Object.assign(stats, { wealth: -19, spareTime: 4, health: 40, day: 8 });
+    game.last = {
+      outcome: 'You joined the gym and recognise a few regulars already.',
+      ledger: { 'Allowance from parents': 3, 'Cost of living': -20, 'Gym membership': -20 },
+      goalMsg: '',
+      healthDelta: -10,
+    };
+  }
+  return game;
 }
 
 export default function App() {
   const [game, setGame] = useState(newGame);
   const [showFlows, setShowFlows] = useState(false);
+  const [showToast, setShowToast] = useState(true); // only renders once there's a `last`
+  const [showHint, setShowHint] = useState(false);
   const { stats, card, last, status } = game;
+  const hideToast = useCallback(() => setShowToast(false), []);
 
   const choose = (side) => {
     const result = applyChoice(stats, card, side);
@@ -67,11 +100,13 @@ export default function App() {
       status: result.gameOver ? 'lost' : allDone ? 'won' : !nextCard ? 'out' : 'playing',
       lostTo: result.gameOver,
     });
+    setShowToast(true);
   };
 
   const restart = () => {
     setGame(newGame());
     setShowFlows(false);
+    setShowToast(false);
   };
 
   const net = weeklyNet(stats.flows);
@@ -79,89 +114,80 @@ export default function App() {
   const inDebt = stats.wealth < 0;
   const underSlept = isUnderSlept(stats);
   const lowHealth = stats.health < LOW_HEALTH;
+  const playing = status === 'playing';
 
   return (
     <div className="app">
       <header className="hud hud-top">
         <Stat label="Time" value={`Day ${stats.day}`} sub={`Week ${Math.ceil(stats.day / 7)}`} />
-        <div className="stat-group">
-          <Stat
-            label="Income ▾"
-            value={`${net >= 0 ? '+' : ''}${money(net)}/wk`}
-            align="right"
-            tone={net < 0 ? 'bad' : null}
-            onClick={() => setShowFlows((v) => !v)}
-          />
-          <Stat
-            label="Wealth"
-            value={STAT_META.wealth.format(stats.wealth)}
-            align="right"
-            tone={inDebt ? 'bad' : null}
-          />
-        </div>
+        <Stat
+          label="Income ▾"
+          value={`${net >= 0 ? '+' : ''}${money(net)}/wk`}
+          align="right"
+          tone={net < 0 ? 'bad' : null}
+          onClick={() => setShowFlows((v) => !v)}
+        />
+        <Stat
+          label="Wealth"
+          value={STAT_META.wealth.format(stats.wealth)}
+          align="right"
+          tone={inDebt ? 'bad' : null}
+        />
+
+        {showFlows && (
+          <div className="flows" onClick={() => setShowFlows(false)}>
+            <h3>Recurring</h3>
+            {stats.flows.length === 0 ? (
+              <p className="muted">No regular income or expenses.</p>
+            ) : (
+              <ul>
+                {stats.flows.map((f) => (
+                  <li key={f.id}>
+                    <span>{f.label}</span>
+                    <span className={f.amount >= 0 ? 'pos' : 'neg'}>
+                      {formatFlow(f)}
+                      {f.scheduled ? (
+                        <small> · due day {f.startDay}</small>
+                      ) : (
+                        f.endDay && <small> · ends day {f.endDay}</small>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </header>
 
-      {showFlows && (
-        <div className="flows">
-          <h3>Recurring</h3>
-          {stats.flows.length === 0 ? (
-            <p className="muted">No regular income or expenses.</p>
-          ) : (
-            <ul>
-              {stats.flows.map((f) => (
-                <li key={f.id}>
-                  <span>{f.label}</span>
-                  <span className={f.amount >= 0 ? 'pos' : 'neg'}>
-                    {formatFlow(f)}
-                    {f.scheduled ? (
-                      <small> · due day {f.startDay}</small>
-                    ) : (
-                      f.endDay && <small> · ends day {f.endDay}</small>
-                    )}
-                  </span>
-                </li>
-              ))}
-            </ul>
+      {playing && (
+        <div className="status-strip">
+          {goal && (
+            <button type="button" className="goal" onClick={() => setShowHint((v) => !v)}>
+              <span className="goal-step">🎯 {GOALS.indexOf(goal) + 1}/{GOALS.length}</span>
+              <strong>{goal.title}</strong>
+              <span className="goal-more">{showHint ? '▴' : 'ⓘ'}</span>
+              {showHint && <span className="goal-hint">{goal.hint}</span>}
+            </button>
+          )}
+          {(inDebt || underSlept) && (
+            <div className="pills" role="alert">
+              {inDebt && <span className="pill pill-debt">⚠️ In debt · out at {money(GAME_OVER_AT)}</span>}
+              {underSlept && (
+                <span className="pill pill-sleep">
+                  😴 Under-slept · health {lowHealth ? 'low' : 'dropping'}
+                </span>
+              )}
+            </div>
           )}
         </div>
       )}
 
-      {status === 'playing' && goal && (
-        <div className="goal">
-          <span className="goal-step">
-            Goal {GOALS.indexOf(goal) + 1}/{GOALS.length}
-          </span>
-          <strong>{goal.title}</strong>
-          <span className="goal-hint">{goal.hint}</span>
-        </div>
-      )}
-
-      {status === 'playing' && inDebt && (
-        <div className="warning" role="alert">
-          ⚠️ You're in debt. If your wealth reaches {money(GAME_OVER_AT)}, it's game over.
-        </div>
-      )}
-
-      {status === 'playing' && underSlept && (
-        <div className="warning warning-sleep" role="alert">
-          😴 Under {SLEEP_THRESHOLD}h of spare time: you're not sleeping enough, and your health is
-          dropping each week.
-          {lowHealth && ' Low health makes medical bills likelier and job interviews harder.'}
-        </div>
-      )}
-
       <main className="stage">
-        {status === 'playing' ? (
+        {playing ? (
           <>
-            <div className="outcome">
-              {last?.goalMsg && <p className="goal-msg">{last.goalMsg}</p>}
-              <p>{last ? last.outcome : 'Swipe to make your choice.'}</p>
-              {last && <Ledger ledger={last.ledger} />}
-              {last?.healthDelta < 0 && (
-                <p className="health-msg">😴 Under-slept: health {last.healthDelta}</p>
-              )}
-            </div>
             <SwipeCard key={game.turn} decision={card} stats={stats} onChoose={choose} />
+            {last && showToast && <Toast last={last} onClose={hideToast} />}
           </>
         ) : (
           <div className={`summary summary-${status}`}>
@@ -194,7 +220,7 @@ export default function App() {
       </main>
 
       <footer className="hud hud-bottom">
-        <Stat label="Social" value={STAT_META.social.format(stats.social)} />
+        <Stat label="Social" value={STAT_META.social.format(stats.social)} align="center" />
         <Stat label="Skills" value={STAT_META.skills.format(stats.skills)} align="center" />
         <Stat
           label="Health"
@@ -203,11 +229,10 @@ export default function App() {
           tone={lowHealth ? 'bad' : underSlept ? 'warn' : null}
         />
         <Stat
-          label="Spare time"
+          label="Spare"
           value={STAT_META.spareTime.format(stats.spareTime)}
-          align="right"
+          align="center"
           tone={underSlept ? 'bad' : null}
-          sub={underSlept ? '😴 under-slept' : null}
         />
       </footer>
     </div>
