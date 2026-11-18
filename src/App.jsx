@@ -3,7 +3,10 @@ import SwipeCard from './components/SwipeCard.jsx';
 import {
   GOALS,
   GAME_OVER_AT,
+  LOW_HEALTH,
+  SLEEP_THRESHOLD,
   STAT_META,
+  isUnderSlept,
   createInitialStats,
   currentGoal,
   drawCard,
@@ -43,7 +46,7 @@ function Ledger({ ledger }) {
 
 function newGame() {
   const stats = createInitialStats();
-  return { stats, card: drawCard(stats), turn: 0, last: null, status: 'playing' };
+  return { stats, card: drawCard(stats), turn: 0, last: null, status: 'playing', lostTo: null };
 }
 
 export default function App() {
@@ -60,8 +63,9 @@ export default function App() {
       stats: result.stats,
       card: nextCard,
       turn: game.turn + 1,
-      last: { outcome: result.outcome, ledger: result.ledger, goalMsg },
+      last: { outcome: result.outcome, ledger: result.ledger, goalMsg, healthDelta: result.healthDelta },
       status: result.gameOver ? 'lost' : allDone ? 'won' : !nextCard ? 'out' : 'playing',
+      lostTo: result.gameOver,
     });
   };
 
@@ -73,6 +77,8 @@ export default function App() {
   const net = weeklyNet(stats.flows);
   const goal = currentGoal(stats);
   const inDebt = stats.wealth < 0;
+  const underSlept = isUnderSlept(stats);
+  const lowHealth = stats.health < LOW_HEALTH;
 
   return (
     <div className="app">
@@ -107,7 +113,11 @@ export default function App() {
                   <span>{f.label}</span>
                   <span className={f.amount >= 0 ? 'pos' : 'neg'}>
                     {formatFlow(f)}
-                    {f.endDay && <small> · ends day {f.endDay}</small>}
+                    {f.scheduled ? (
+                      <small> · due day {f.startDay}</small>
+                    ) : (
+                      f.endDay && <small> · ends day {f.endDay}</small>
+                    )}
                   </span>
                 </li>
               ))}
@@ -132,6 +142,14 @@ export default function App() {
         </div>
       )}
 
+      {status === 'playing' && underSlept && (
+        <div className="warning warning-sleep" role="alert">
+          😴 Under {SLEEP_THRESHOLD}h of spare time: you're not sleeping enough, and your health is
+          dropping each week.
+          {lowHealth && ' Low health makes medical bills likelier and job interviews harder.'}
+        </div>
+      )}
+
       <main className="stage">
         {status === 'playing' ? (
           <>
@@ -139,18 +157,24 @@ export default function App() {
               {last?.goalMsg && <p className="goal-msg">{last.goalMsg}</p>}
               <p>{last ? last.outcome : 'Swipe to make your choice.'}</p>
               {last && <Ledger ledger={last.ledger} />}
+              {last?.healthDelta < 0 && (
+                <p className="health-msg">😴 Under-slept: health {last.healthDelta}</p>
+              )}
             </div>
             <SwipeCard key={game.turn} decision={card} stats={stats} onChoose={choose} />
           </>
         ) : (
           <div className={`summary summary-${status}`}>
             <h2>
-              {status === 'lost' && '💸 Game over'}
+              {status === 'lost' && (game.lostTo === 'health' ? '🥵 Burned out' : '💸 Game over')}
               {status === 'won' && '🏆 You made it!'}
               {status === 'out' && 'No more decisions (for now)'}
             </h2>
-            {status === 'lost' && (
+            {status === 'lost' && game.lostTo === 'debt' && (
               <p>Your debt hit {money(stats.wealth)} on day {stats.day}.</p>
+            )}
+            {status === 'lost' && game.lostTo === 'health' && (
+              <p>Weeks without enough sleep wore your health down to 0 on day {stats.day}.</p>
             )}
             {last && <p className="muted">{last.outcome}</p>}
             <ul>
@@ -172,7 +196,19 @@ export default function App() {
       <footer className="hud hud-bottom">
         <Stat label="Social" value={STAT_META.social.format(stats.social)} />
         <Stat label="Skills" value={STAT_META.skills.format(stats.skills)} align="center" />
-        <Stat label="Spare time" value={STAT_META.spareTime.format(stats.spareTime)} align="right" />
+        <Stat
+          label="Health"
+          value={STAT_META.health.format(stats.health)}
+          align="center"
+          tone={lowHealth ? 'bad' : underSlept ? 'warn' : null}
+        />
+        <Stat
+          label="Spare time"
+          value={STAT_META.spareTime.format(stats.spareTime)}
+          align="right"
+          tone={underSlept ? 'bad' : null}
+          sub={underSlept ? '😴 under-slept' : null}
+        />
       </footer>
     </div>
   );

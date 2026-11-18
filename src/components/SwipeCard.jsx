@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { STAT_META, formatDelta, formatFlow } from '../decisions.js';
+import { STAT_META, formatDelta, formatFlow, jobChance } from '../decisions.js';
 
 const SWIPE_THRESHOLD = 90; // px of drag needed to commit a choice
 
@@ -10,7 +10,7 @@ function Effects({ choice, stats }) {
     <ul className="effects">
       {apply && (
         <li className="chance">
-          🎲 {Math.round(apply.chance(stats) * 100)}% chance of {formatFlow(apply.job)}
+          🎲 {Math.round(jobChance(apply, stats) * 100)}% chance of {formatFlow(apply.job)}
         </li>
       )}
       {days && <li className="effect-note">⏳ takes {days} days</li>}
@@ -82,7 +82,7 @@ export default function SwipeCard({ decision, stats, onChoose }) {
   return (
     <div className="card-area">
       <div
-        className={`card ${dragging ? 'dragging' : ''}`}
+        className={`card ${dragging ? "dragging" : ""} ${decision.event ? "card-event" : ""}`}
         style={{ transform: `translateX(${dx}px) rotate(${dx / 18}deg)` }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -101,6 +101,8 @@ export default function SwipeCard({ decision, stats, onChoose }) {
         >
           {decision.right.label}
         </div>
+
+        {decision.event && <div className="event-badge">⚡ Surprise!</div>}
 
         <div className="card-image">
           {isImageUrl ? (

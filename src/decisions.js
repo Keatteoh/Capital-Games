@@ -6,14 +6,35 @@ const PERIOD_SHORT = { daily: 'day', weekly: 'wk', monthly: 'mo' };
 export const DEFAULT_DAYS_PER_TURN = 7;
 export const GAME_OVER_AT = -100; // wealth at or below this ends the game
 const COST_OF_LIVING = { label: 'Cost of living', amount: -20, every: 'weekly' };
+export const EVENT_CHANCE = 0.25; // chance each turn that a surprise event interrupts the deck
+
+// Sleep & health: under SLEEP_THRESHOLD hours of spare time means you're under-slept.
+export const SLEEP_THRESHOLD = 6;
+export const LOW_HEALTH = 50;            // below this: more medical events, worse job odds
+const HEALTH_LOSS_PER_WEEK = 10;         // while under-slept
+const HEALTH_GAIN_PER_WEEK = 5;          // while rested
+const LOW_HEALTH_JOB_PENALTY = 0.15;     // subtracted from job application odds
 
 // ---------- Helpers ----------
 export const hasJob = (s) => s.flows.some((f) => f.kind === 'job');
 export const hasFlag = (s, flag) => s.flags.includes(flag);
+export const isUnderSlept = (s) => s.spareTime < SLEEP_THRESHOLD;
 const clampChance = (p) => Math.max(0.05, Math.min(0.95, p));
+
+// Job odds after the low-health penalty. Used for both the card display and the roll.
+export function jobChance(apply, s) {
+  const penalty = s.health < LOW_HEALTH ? LOW_HEALTH_JOB_PENALTY : 0;
+  return clampChance(apply.chance(s) - penalty);
+}
 
 let flowId = 0;
 function makeFlow(def, startDay) {
+  // A one-off payment due in N days, e.g. a late bill: { label, amount, inDays: 14 }
+  if (def.inDays != null) {
+    const due = startDay + def.inDays;
+    return { id: ++flowId, label: def.label, kind: null, amount: def.amount, every: 'daily',
+      startDay: due, endDay: due + 1, scheduled: true };
+  }
   return {
     id: ++flowId,
     label: def.label,
@@ -37,6 +58,7 @@ export function createInitialStats() {
     wealth: randomInt(5, 500),
     social: 0,
     spareTime: 24,
+    health: 100,
     skills: 0,
     flows,
     flags: [],          // things the player has learned/unlocked, e.g. 'chainsaw'
@@ -275,13 +297,133 @@ export const DECISIONS = [
   },
 ];
 
-// Picks a random card the player is eligible for, avoiding an immediate repeat.
-export function drawCard(stats, lastId = null) {
-  const eligible = DECISIONS.filter(
-    (c) => !stats.usedCards.includes(c.id) && (!c.when || c.when(stats))
-  );
-  const pool = eligible.length > 1 ? eligible.filter((c) => c.id !== lastId) : eligible;
-  return pool[Math.floor(Math.random() * pool.length)] ?? null;
+// ---------- Surprise events ----------
+// Same shape as cards, but they interrupt the deck at random (EVENT_CHANCE per turn).
+// Events are repeatable unless `once: true`.
+export const EVENTS = [
+  {
+    id: 'medical-bill',
+    weight: (s) => (s.health < LOW_HEALTH ? 4 : 1), // much likelier when run down
+    image: '🏥',
+    prompt: 'You sprained your ankle. The clinic sends a $180 bill.',
+    left: {
+      label: 'Pay now',
+      effects: { wealth: -180 },
+      outcome: 'Paid in full. Ouch, in more ways than one.',
+    },
+    right: {
+      label: 'Payment plan',
+      recurring: [{ label: 'Medical payment plan', amount: -20, every: 'weekly', durationDays: 70 }],
+      outcome: 'You set up a payment plan: $20 a week for 10 weeks ($200 in total).',
+    },
+  },
+  {
+    id: 'utility-bill',
+    image: '💡',
+    prompt: 'Your power bill came in much higher than usual: $70.',
+    left: {
+      label: 'Pay now',
+      effects: { wealth: -70 },
+      outcome: 'Bill paid. Maybe turn the heater down a bit.',
+    },
+    right: {
+      label: 'Pay late',
+      recurring: [{ label: 'Late power bill', amount: -90, inDays: 14 }],
+      outcome: 'You pushed it back two weeks. A $20 late fee is coming with it.',
+    },
+  },
+  {
+    id: 'phone-broken',
+    image: '📱',
+    prompt: 'You dropped your phone and the screen shattered.',
+    left: {
+      label: 'Repair',
+      effects: { wealth: -120 },
+      outcome: 'Good as new, for $120.',
+    },
+    right: {
+      label: 'Live with it',
+      effects: { social: -1 },
+      outcome: 'You keep missing messages through the cracks.',
+    },
+  },
+  {
+    id: 'dentist',
+    image: '🦷',
+    prompt: 'A nagging toothache. The dentist quotes $250.',
+    left: {
+      label: 'Treat it',
+      effects: { wealth: -250 },
+      outcome: 'Fixed. Expensive, but the pain is gone.',
+    },
+    right: {
+      label: 'Ignore it',
+      effects: { spareTime: -3 },
+      recurring: [{ label: 'Painkillers', amount: -5, every: 'weekly', durationDays: 56 }],
+      outcome: 'Painkillers for now. It is hard to relax.',
+    },
+  },
+  {
+    id: 'rent-increase',
+    once: true,
+    image: '🏠',
+    prompt: 'Your landlord is raising the rent by $10 a week.',
+    when: (s) => hasJob(s),
+    left: {
+      label: 'Accept',
+      recurring: [{ label: 'Rent increase', amount: -10, every: 'weekly' }],
+      outcome: 'You signed the new lease.',
+    },
+    right: {
+      label: 'Move out',
+      effects: { wealth: -150, spareTime: -4 },
+      outcome: 'Moving cost $150 and a weekend, but your rent stays the same.',
+    },
+  },
+  {
+    id: 'tax-refund',
+    image: '🧾',
+    prompt: 'Good news: a $60 tax refund landed in your account.',
+    left: {
+      label: 'Save it',
+      effects: { wealth: 60 },
+      outcome: 'Straight into savings.',
+    },
+    right: {
+      label: 'Treat yourself',
+      effects: { wealth: 20, social: 1 },
+      outcome: 'You spent $40 on dinner with friends and kept the rest.',
+    },
+  },
+].map((e) => ({ ...e, event: true, repeatable: !e.once }));
+
+const pick = (list, rng) => list[Math.floor(rng() * list.length)] ?? null;
+
+// Weighted pick; cards without a `weight` function count as 1.
+function pickWeighted(list, stats, rng) {
+  const weights = list.map((c) => (c.weight ? c.weight(stats) : 1));
+  let r = rng() * weights.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < list.length; i++) {
+    r -= weights[i];
+    if (r < 0) return list[i];
+  }
+  return list[list.length - 1] ?? null;
+}
+
+// Picks the next card: sometimes a surprise event, otherwise a random eligible
+// deck card. Avoids showing the same card twice in a row.
+export function drawCard(stats, lastId = null, rng = Math.random) {
+  const eligible = (list) =>
+    list.filter((c) => c.id !== lastId && !stats.usedCards.includes(c.id) && (!c.when || c.when(stats)));
+
+  if (stats.day > 1 && rng() < EVENT_CHANCE) {
+    const event = pickWeighted(eligible(EVENTS), stats, rng);
+    if (event) return event;
+  }
+  const deck = eligible(DECISIONS);
+  if (deck.length) return pick(deck, rng);
+  // Only the last card is eligible: allow the repeat rather than ending the game.
+  return DECISIONS.find((c) => c.id === lastId && (!c.when || c.when(stats))) ?? null;
 }
 
 // ---------- Display ----------
@@ -289,6 +431,7 @@ export const STAT_META = {
   wealth: { label: 'Wealth', format: (v) => money(v) },
   social: { label: 'Social', format: (v) => `${v}` },
   skills: { label: 'Skills', format: (v) => `${v}` },
+  health: { label: 'Health', format: (v) => `${v}` },
   spareTime: { label: 'Spare time', format: (v) => `${v}h` },
 };
 
@@ -296,10 +439,16 @@ export function money(v) {
   return `${v < 0 ? '-' : ''}$${Math.abs(Math.round(v))}`;
 }
 
+const PERIOD_PLURAL = { daily: 'days', weekly: 'wks', monthly: 'mos' };
+
 export function formatFlow(flow) {
   const sign = flow.amount > 0 ? '+' : '-';
-  const base = `${sign}$${Math.abs(flow.amount)}/${PERIOD_SHORT[flow.every]}`;
-  return flow.durationDays ? `${base} × ${flow.durationDays}d` : base;
+  const amount = `${sign}$${Math.abs(flow.amount)}`;
+  if (flow.inDays != null) return `${amount} due in ${flow.inDays} days`;
+  if (flow.scheduled) return amount;
+  const base = `${amount}/${PERIOD_SHORT[flow.every]}`;
+  if (!flow.durationDays) return base;
+  return `${base} for ${flow.durationDays / PERIOD_DAYS[flow.every]} ${PERIOD_PLURAL[flow.every]}`;
 }
 
 export function formatDelta(key, delta) {
@@ -312,7 +461,9 @@ export function formatDelta(key, delta) {
 
 // Net recurring cash flow, normalised to a weekly figure for the HUD.
 export function weeklyNet(flows) {
-  return flows.reduce((sum, f) => sum + (f.amount * 7) / PERIOD_DAYS[f.every], 0);
+  return flows
+    .filter((f) => !f.scheduled)
+    .reduce((sum, f) => sum + (f.amount * 7) / PERIOD_DAYS[f.every], 0);
 }
 
 // ---------- Turn logic ----------
@@ -348,7 +499,7 @@ export function applyChoice(stats, card, side, rng = Math.random) {
   for (const flag of choice.setFlags ?? []) if (!next.flags.includes(flag)) next.flags.push(flag);
 
   if (choice.apply) {
-    const hired = rng() < choice.apply.chance(stats);
+    const hired = rng() < jobChance(choice.apply, stats);
     if (hired) {
       next.flows.push(makeFlow({ ...choice.apply.job, kind: 'job' }, next.day));
       addEffects(next, choice.apply.effects);
@@ -370,8 +521,18 @@ export function applyChoice(stats, card, side, rng = Math.random) {
   next.spareTime = Math.max(0, next.spareTime);
   next.social = Math.max(0, next.social);
 
+  // Sleep: health drains while under-slept and slowly recovers while rested.
+  const weeks = days / 7;
+  const healthBefore = next.health;
+  const rate = isUnderSlept(next) ? -HEALTH_LOSS_PER_WEEK : HEALTH_GAIN_PER_WEEK;
+  next.health = Math.max(0, Math.min(100, Math.round(next.health + rate * weeks)));
+  const healthDelta = next.health - healthBefore;
+
   const newGoals = GOALS.filter((g) => !next.goalsDone.includes(g.id) && g.isDone(next));
   next.goalsDone.push(...newGoals.map((g) => g.id));
 
-  return { stats: next, ledger, outcome, newGoals, gameOver: next.wealth <= GAME_OVER_AT };
+  const gameOver =
+    next.wealth <= GAME_OVER_AT ? 'debt' : next.health <= 0 ? 'health' : null;
+
+  return { stats: next, ledger, outcome, newGoals, healthDelta, gameOver };
 }

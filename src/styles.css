@@ -269,3 +269,35 @@ body {
 .summary ul { list-style: none; padding: 0; margin: 0 0 12px; }
 .summary-lost h2 { color: #f87171; }
 .summary-won h2 { color: #4ade80; }
+
+/* ---------- Surprise events ---------- */
+.card-event {
+  background: #fff4e0;
+  box-shadow: 0 0 0 3px #f59e0b, 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+.card-event .card-image { background: #fde7c2; }
+.card-event .choice { background: #fbe9cc; }
+.event-badge {
+  display: inline-block;
+  margin-bottom: 10px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #f59e0b;
+  color: #1d1f24;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* ---------- Sleep & health ---------- */
+.hud-bottom { gap: 6px; }
+.hud-bottom .stat { flex: 1; min-width: 0; padding: 8px; }
+.hud-bottom .stat-label { font-size: 10px; letter-spacing: 0.03em; }
+.stat-warn .stat-value { color: #fbbf24; }
+.warning-sleep {
+  background: rgba(139, 92, 246, 0.18);
+  border-color: rgba(139, 92, 246, 0.5);
+  color: #c4b5fd;
+}
+.health-msg { color: #c4b5fd; font-size: 12px; font-weight: 600; margin-top: 4px !important; }
