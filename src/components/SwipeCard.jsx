@@ -3,9 +3,17 @@ import { STAT_META, formatDelta, formatFlow } from '../decisions.js';
 
 const SWIPE_THRESHOLD = 90; // px of drag needed to commit a choice
 
-function Effects({ choice }) {
+function Effects({ choice, stats }) {
+  const apply = choice.apply;
+  const days = choice.days;
   return (
     <ul className="effects">
+      {apply && (
+        <li className="chance">
+          🎲 {Math.round(apply.chance(stats) * 100)}% chance of {formatFlow(apply.job)}
+        </li>
+      )}
+      {days && <li className="effect-note">⏳ takes {days} days</li>}
       {(choice.recurring ?? []).map((flow) => (
         <li key={flow.label} className={flow.amount >= 0 ? 'pos' : 'neg'}>
           {formatFlow(flow)} <span className="effect-note">{flow.label.toLowerCase()}</span>
@@ -20,7 +28,7 @@ function Effects({ choice }) {
   );
 }
 
-export default function SwipeCard({ decision, onChoose }) {
+export default function SwipeCard({ decision, stats, onChoose }) {
   const [dx, setDx] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [leaving, setLeaving] = useState(null); // 'left' | 'right' | null
@@ -106,11 +114,11 @@ export default function SwipeCard({ decision, onChoose }) {
         <div className="choices">
           <div className={`choice choice-left ${activeSide === 'left' ? 'active' : ''}`}>
             <span className="choice-label">← {decision.left.label}</span>
-            <Effects choice={decision.left} />
+            <Effects choice={decision.left} stats={stats} />
           </div>
           <div className={`choice choice-right ${activeSide === 'right' ? 'active' : ''}`}>
             <span className="choice-label">{decision.right.label} →</span>
-            <Effects choice={decision.right} />
+            <Effects choice={decision.right} stats={stats} />
           </div>
         </div>
       </div>

@@ -1,19 +1,25 @@
 import { useState } from 'react';
 import SwipeCard from './components/SwipeCard.jsx';
 import {
-  DECISIONS,
+  GOALS,
+  GAME_OVER_AT,
   STAT_META,
   createInitialStats,
+  currentGoal,
+  drawCard,
   applyChoice,
   weeklyNet,
   formatFlow,
   money,
 } from './decisions.js';
 
-function Stat({ label, value, align = 'left', onClick, sub }) {
+function Stat({ label, value, align = 'left', onClick, sub, tone }) {
   const Tag = onClick ? 'button' : 'div';
   return (
-    <Tag className={`stat stat-${align} ${onClick ? 'stat-button' : ''}`} onClick={onClick}>
+    <Tag
+      className={`stat stat-${align} ${onClick ? 'stat-button' : ''} ${tone ? `stat-${tone}` : ''}`}
+      onClick={onClick}
+    >
       <span className="stat-label">{label}</span>
       <span className="stat-value">{value}</span>
       {sub && <span className="stat-sub">{sub}</span>}
@@ -35,35 +41,38 @@ function Ledger({ ledger }) {
   );
 }
 
-export default function App() {
-  const [stats, setStats] = useState(createInitialStats);
-  const [index, setIndex] = useState(0);
-  const [history, setHistory] = useState([]);
-  const [showFlows, setShowFlows] = useState(false);
+function newGame() {
+  const stats = createInitialStats();
+  return { stats, card: drawCard(stats), turn: 0, last: null, status: 'playing' };
+}
 
-  const decision = DECISIONS[index];
-  const finished = index >= DECISIONS.length;
+export default function App() {
+  const [game, setGame] = useState(newGame);
+  const [showFlows, setShowFlows] = useState(false);
+  const { stats, card, last, status } = game;
 
   const choose = (side) => {
-    const choice = decision[side];
-    const result = applyChoice(stats, choice, decision.days);
-    setStats(result.stats);
-    setHistory((h) => [
-      ...h,
-      { prompt: decision.prompt, label: choice.label, outcome: choice.outcome, ledger: result.ledger },
-    ]);
-    setIndex((i) => i + 1);
+    const result = applyChoice(stats, card, side);
+    const goalMsg = result.newGoals.map((g) => `🎯 Goal complete: ${g.title}!`).join(' ');
+    const allDone = result.stats.goalsDone.length >= GOALS.length;
+    const nextCard = drawCard(result.stats, card.id);
+    setGame({
+      stats: result.stats,
+      card: nextCard,
+      turn: game.turn + 1,
+      last: { outcome: result.outcome, ledger: result.ledger, goalMsg },
+      status: result.gameOver ? 'lost' : allDone ? 'won' : !nextCard ? 'out' : 'playing',
+    });
   };
 
   const restart = () => {
-    setStats(createInitialStats());
-    setIndex(0);
-    setHistory([]);
+    setGame(newGame());
     setShowFlows(false);
   };
 
-  const last = history[history.length - 1];
   const net = weeklyNet(stats.flows);
+  const goal = currentGoal(stats);
+  const inDebt = stats.wealth < 0;
 
   return (
     <div className="app">
@@ -74,9 +83,15 @@ export default function App() {
             label="Income ▾"
             value={`${net >= 0 ? '+' : ''}${money(net)}/wk`}
             align="right"
+            tone={net < 0 ? 'bad' : null}
             onClick={() => setShowFlows((v) => !v)}
           />
-          <Stat label="Wealth" value={STAT_META.wealth.format(stats.wealth)} align="right" />
+          <Stat
+            label="Wealth"
+            value={STAT_META.wealth.format(stats.wealth)}
+            align="right"
+            tone={inDebt ? 'bad' : null}
+          />
         </div>
       </header>
 
@@ -101,36 +116,62 @@ export default function App() {
         </div>
       )}
 
+      {status === 'playing' && goal && (
+        <div className="goal">
+          <span className="goal-step">
+            Goal {GOALS.indexOf(goal) + 1}/{GOALS.length}
+          </span>
+          <strong>{goal.title}</strong>
+          <span className="goal-hint">{goal.hint}</span>
+        </div>
+      )}
+
+      {status === 'playing' && inDebt && (
+        <div className="warning" role="alert">
+          ⚠️ You're in debt. If your wealth reaches {money(GAME_OVER_AT)}, it's game over.
+        </div>
+      )}
+
       <main className="stage">
-        {finished ? (
-          <div className="summary">
-            <h2>End of the road (for now)</h2>
-            <p className="muted">
-              Day {stats.day} · {money(stats.wealth)} in the bank · {net >= 0 ? '+' : ''}
-              {money(net)}/wk
-            </p>
-            <ul>
-              {history.map((h, i) => (
-                <li key={i}>
-                  <strong>{h.label}</strong> — {h.prompt}
-                </li>
-              ))}
-            </ul>
-            <button className="btn btn-primary" onClick={restart}>Play again</button>
-          </div>
-        ) : (
+        {status === 'playing' ? (
           <>
             <div className="outcome">
+              {last?.goalMsg && <p className="goal-msg">{last.goalMsg}</p>}
               <p>{last ? last.outcome : 'Swipe to make your choice.'}</p>
               {last && <Ledger ledger={last.ledger} />}
             </div>
-            <SwipeCard key={decision.id} decision={decision} onChoose={choose} />
+            <SwipeCard key={game.turn} decision={card} stats={stats} onChoose={choose} />
           </>
+        ) : (
+          <div className={`summary summary-${status}`}>
+            <h2>
+              {status === 'lost' && '💸 Game over'}
+              {status === 'won' && '🏆 You made it!'}
+              {status === 'out' && 'No more decisions (for now)'}
+            </h2>
+            {status === 'lost' && (
+              <p>Your debt hit {money(stats.wealth)} on day {stats.day}.</p>
+            )}
+            {last && <p className="muted">{last.outcome}</p>}
+            <ul>
+              {GOALS.map((g) => (
+                <li key={g.id}>
+                  {stats.goalsDone.includes(g.id) ? '✅' : '⬜️'} {g.title}
+                </li>
+              ))}
+            </ul>
+            <p className="muted">
+              Day {stats.day} · {money(stats.wealth)} · {net >= 0 ? '+' : ''}
+              {money(net)}/wk · skills {stats.skills}
+            </p>
+            <button className="btn btn-primary" onClick={restart}>Play again</button>
+          </div>
         )}
       </main>
 
       <footer className="hud hud-bottom">
         <Stat label="Social" value={STAT_META.social.format(stats.social)} />
+        <Stat label="Skills" value={STAT_META.skills.format(stats.skills)} align="center" />
         <Stat label="Spare time" value={STAT_META.spareTime.format(stats.spareTime)} align="right" />
       </footer>
     </div>
