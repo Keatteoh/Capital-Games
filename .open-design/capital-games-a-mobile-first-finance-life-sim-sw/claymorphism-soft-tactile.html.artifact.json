@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "kind": "html",
+  "title": "Capital Games — Claymorphism (soft & tactile)",
+  "entry": ".open-design/capital-games-a-mobile-first-finance-life-sim-sw/claymorphism-soft-tactile.html",
+  "renderer": "html",
+  "status": "complete",
+  "exports": [
+    "html",
+    "standalone",
+    "site",
+    "png",
+    "jpeg",
+    "pdf"
+  ],
+  "createdAt": "2026-11-19T16:25:02.869Z",
+  "updatedAt": "2026-11-19T16:25:02.869Z",
+  "sourceSkillId": "od:prototype:mobile-app",
+  "designSystemId": "claymorphism",
+  "explorationId": "capital-games-a-mobile-first-finance-life-sim-sw",
+  "directionId": "claymorphism-soft-tactile"
+}

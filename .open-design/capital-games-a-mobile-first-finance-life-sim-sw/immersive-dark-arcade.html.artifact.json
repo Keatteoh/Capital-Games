@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "kind": "html",
+  "title": "Capital Games — Immersive (dark arcade)",
+  "entry": ".open-design/capital-games-a-mobile-first-finance-life-sim-sw/immersive-dark-arcade.html",
+  "renderer": "html",
+  "status": "complete",
+  "exports": [
+    "html",
+    "standalone",
+    "site",
+    "png",
+    "jpeg",
+    "pdf"
+  ],
+  "createdAt": "2026-11-19T16:25:02.883Z",
+  "updatedAt": "2026-11-19T16:25:02.883Z",
+  "sourceSkillId": "od:prototype:mobile-app",
+  "designSystemId": "immersive",
+  "explorationId": "capital-games-a-mobile-first-finance-life-sim-sw",
+  "directionId": "immersive-dark-arcade"
+}

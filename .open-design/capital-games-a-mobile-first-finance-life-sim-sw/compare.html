@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="Open Design Agent Kit">
+<title>Capital Games: a mobile-first finance life-sim swipe game… — directions</title>
+<style>
+:root { --bg: #f6f6f4; --surface: #fff; --fg: #1b1b1a; --muted: #6b6b66; --border: #e2e2dd; --accent: #2f6fde; --chosen: #1f8a4c; }
+@media (prefers-color-scheme: dark) { :root { --bg: #151514; --surface: #1e1e1c; --fg: #ededea; --muted: #a3a39d; --border: #34342f; --accent: #7aa7ff; --chosen: #4cc283; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+main { max-width: 1680px; margin: 0 auto; padding: 32px 24px 48px; }
+h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -0.01em; }
+.meta, .muted { color: var(--muted); }
+.brief { color: var(--muted); max-width: 900px; margin: 8px 0 0; }
+.grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin-top: 28px; }
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; min-width: 0; }
+.card.chosen { border: 2px solid var(--chosen); }
+.card header { display: flex; align-items: center; gap: 10px; }
+.card h2 { font-size: 16px; margin: 0; flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.badges { display: flex; gap: 6px; margin: 8px 0 12px 36px; }
+.index { flex: none; display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--fg); color: var(--surface); font-weight: 600; font-size: 13px; }
+.badge { font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; }
+.chosen-badge { color: var(--chosen); border-color: var(--chosen); font-weight: 600; }
+.frame { position: relative; aspect-ratio: 16 / 10; overflow: hidden; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+/* One-third scale: each preview gets a desktop-width virtual viewport (~1400px for a 470px card). */
+.frame iframe { position: absolute; top: 0; left: 0; width: 300%; height: 300%; border: 0; transform: scale(0.3333); transform-origin: 0 0; }
+.placeholder { display: grid; place-content: center; gap: 6px; text-align: center; color: var(--muted); background: repeating-linear-gradient(45deg, transparent 0 10px, var(--border) 10px 11px); }
+.summary { margin: 12px 0 4px; }
+.link { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+a { color: var(--accent); }
+code { font: 12px/1.4 ui-monospace, Menlo, monospace; color: var(--muted); }
+.built { margin-top: 32px; }
+.built h2 { font-size: 16px; }
+footer { margin-top: 32px; font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Capital Games: a mobile-first finance life-sim swipe game…</h1>
+  <div class="meta">3 directions · Custom</div>
+  <p class="brief">Capital Games: a mobile-first finance life-sim swipe game. Mock up the main swipe-card screen on an iPhone. Top HUD: Time (Day 8 · Week 2) top-left, Income (-$15/wk, tappable) and Wealth (-$19, in debt) top-right. Under it: goal strip &quot;🎯 1/2 Get a job&quot; and warning pills &quot;In debt · out at -$100&quot; and &quot;Under-slept · health low&quot;. Centre: a swipeable decision card with an image (shopping cart), prompt &quot;The supermarket is hiring shelf stackers. Apply?&quot;, two tappable choices: left &quot;← Apply&quot; (🎲 40% chance · +$150/wk, ⏳ 14 days, -$5 once) and right &quot;Skip →&quot;. Bottom stats bar: Social 1, Skills 1, Health 40 (low), Spare 4h (under-slept). Show one card tilted mid-swipe with an APPLY stamp is optional. Compare 3 design systems for the game&#39;s look.</p>
+  <div class="grid">
+<article class="card" data-direction="lingo-bright-playful">
+  <header>
+    <span class="index">A</span>
+    <h2 title="Lingo — bright &amp; playful">Lingo — bright &amp; playful</h2>
+  </header>
+  <div class="badges"><span class="badge">Custom</span></div>
+  <div class="frame"><iframe src="lingo-bright-playful.html" title="Lingo — bright &amp; playful" scrolling="no"></iframe></div>
+  <p class="summary">Apply the &#39;lingo&#39; design system: light theme, bright green accent #58cc02, Nunito, chunky rounded shapes with tactile 3D bottom borders, …</p>
+  <p class="link"><a href="lingo-bright-playful.html">Open full size</a> <code>.open-design/capital-games-a-mobile-first-finance-life-sim-sw/lingo-bright-playful.html</code></p>
+</article>
+<article class="card" data-direction="claymorphism-soft-tactile">
+  <header>
+    <span class="index">B</span>
+    <h2 title="Claymorphism — soft &amp; tactile">Claymorphism — soft &amp; tactile</h2>
+  </header>
+  <div class="badges"><span class="badge">Custom</span></div>
+  <div class="frame"><iframe src="claymorphism-soft-tactile.html" title="Claymorphism — soft &amp; tactile" scrolling="no"></iframe></div>
+  <p class="summary">Apply the &#39;claymorphism&#39; design system: light theme, warm orange/terracotta accent, Poppins, puffy soft 3D clay surfaces with layered inn…</p>
+  <p class="link"><a href="claymorphism-soft-tactile.html">Open full size</a> <code>.open-design/capital-games-a-mobile-first-finance-life-sim-sw/claymorphism-soft-tactile.html</code></p>
+</article>
+<article class="card" data-direction="immersive-dark-arcade">
+  <header>
+    <span class="index">C</span>
+    <h2 title="Immersive — dark arcade">Immersive — dark arcade</h2>
+  </header>
+  <div class="badges"><span class="badge">Custom</span></div>
+  <div class="frame"><iframe src="immersive-dark-arcade.html" title="Immersive — dark arcade" scrolling="no"></iframe></div>
+  <p class="summary">Apply the &#39;immersive&#39; design system: dark deep-green canvas, chunky comic-panel outlines, Oswald condensed display type, bright magenta #…</p>
+  <p class="link"><a href="immersive-dark-arcade.html">Open full size</a> <code>.open-design/capital-games-a-mobile-first-finance-life-sim-sw/immersive-dark-arcade.html</code></p>
+</article>
+  </div>
+  
+  <footer>Generated by Open Design Agent Kit. Tell your agent which direction you want, e.g. “go with B” or “B, with A’s hero”.</footer>
+</main>
+</body>
+</html>

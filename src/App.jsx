@@ -17,17 +17,51 @@ import {
 
 const TOAST_MS = 3200;
 
-function Stat({ label, value, align = 'left', onClick, sub, tone }) {
+// One cell of the scoreboard at the top.
+function Cell({ label, value, onClick, tone }) {
   const Tag = onClick ? 'button' : 'div';
   return (
-    <Tag
-      className={`stat stat-${align} ${onClick ? 'stat-button' : ''} ${tone ? `stat-${tone}` : ''}`}
-      onClick={onClick}
-    >
-      <span className="stat-label">{label}</span>
-      <span className="stat-value">{value}</span>
-      {sub && <span className="stat-sub">{sub}</span>}
+    <Tag type={onClick ? 'button' : undefined} className={`cell ${tone ? `cell-${tone}` : ''}`} onClick={onClick}>
+      <span className="cell-label">{label}</span>
+      <span className="cell-value num">{value}</span>
     </Tag>
+  );
+}
+
+// A stat with a 10-segment bar, used along the bottom.
+function Meter({ label, value, display, max, tone }) {
+  const on = Math.round(Math.max(0, Math.min(1, value / max)) * 10);
+  return (
+    <div className={`meter ${tone ? `meter-${tone}` : ''}`}>
+      <div className="meter-row">
+        <span>{label}</span>
+        <b className="num">{display}</b>
+      </div>
+      <div className="seg" aria-hidden="true">
+        {Array.from({ length: 10 }, (_, i) => <i key={i} className={i < on ? 'on' : ''} />)}
+      </div>
+    </div>
+  );
+}
+
+// How close the player is to the game-over debt line.
+function DebtBar({ wealth }) {
+  const pct = Math.min(100, (Math.abs(wealth) / Math.abs(GAME_OVER_AT)) * 100);
+  return (
+    <div className="debt" role="alert">
+      <div className="debt-top">
+        <span>⚠️ Debt danger</span>
+        <b>Out at {money(GAME_OVER_AT)}</b>
+      </div>
+      <div className="debt-track" aria-label={`Debt ${money(wealth)} of ${money(GAME_OVER_AT)}`}>
+        <i style={{ width: `${pct}%` }} />
+      </div>
+      <div className="debt-ticks num">
+        <span>$0</span>
+        <span>{money(GAME_OVER_AT / 2)}</span>
+        <span>{money(GAME_OVER_AT)}</span>
+      </div>
+    </div>
   );
 }
 
@@ -118,21 +152,15 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="hud hud-top">
-        <Stat label="Time" value={`Day ${stats.day}`} sub={`Week ${Math.ceil(stats.day / 7)}`} />
-        <Stat
+      <header className="board">
+        <Cell label="Day" value={String(stats.day).padStart(2, '0')} />
+        <Cell
           label="Income ▾"
           value={`${net >= 0 ? '+' : ''}${money(net)}/wk`}
-          align="right"
           tone={net < 0 ? 'bad' : null}
           onClick={() => setShowFlows((v) => !v)}
         />
-        <Stat
-          label="Wealth"
-          value={STAT_META.wealth.format(stats.wealth)}
-          align="right"
-          tone={inDebt ? 'bad' : null}
-        />
+        <Cell label="Wealth" value={STAT_META.wealth.format(stats.wealth)} tone={inDebt ? 'bad' : null} />
 
         {showFlows && (
           <div className="flows" onClick={() => setShowFlows(false)}>
@@ -162,23 +190,18 @@ export default function App() {
 
       {playing && (
         <div className="status-strip">
+          {inDebt && <DebtBar wealth={stats.wealth} />}
           {goal && (
-            <button type="button" className="goal" onClick={() => setShowHint((v) => !v)}>
-              <span className="goal-step">🎯 {GOALS.indexOf(goal) + 1}/{GOALS.length}</span>
-              <strong>{goal.title}</strong>
-              <span className="goal-more">{showHint ? '▴' : 'ⓘ'}</span>
-              {showHint && <span className="goal-hint">{goal.hint}</span>}
-            </button>
-          )}
-          {(inDebt || underSlept) && (
-            <div className="pills" role="alert">
-              {inDebt && <span className="pill pill-debt">⚠️ In debt · out at {money(GAME_OVER_AT)}</span>}
-              {underSlept && (
-                <span className="pill pill-sleep">
-                  😴 Under-slept · health {lowHealth ? 'low' : 'dropping'}
-                </span>
+            <button type="button" className="quest" onClick={() => setShowHint((v) => !v)}>
+              <span className="quest-badge">Quest {GOALS.indexOf(goal) + 1}/{GOALS.length}</span>
+              <span className="quest-title">{goal.title}</span>
+              {underSlept ? (
+                <span className="quest-sleep" role="alert">😴 Under-slept{lowHealth ? ' · health low' : ''}</span>
+              ) : (
+                <span className="quest-more">{showHint ? '▴' : 'ⓘ'}</span>
               )}
-            </div>
+              {showHint && <span className="quest-hint">{goal.hint}</span>}
+            </button>
           )}
         </div>
       )}
@@ -219,19 +242,21 @@ export default function App() {
         )}
       </main>
 
-      <footer className="hud hud-bottom">
-        <Stat label="Social" value={STAT_META.social.format(stats.social)} align="center" />
-        <Stat label="Skills" value={STAT_META.skills.format(stats.skills)} align="center" />
-        <Stat
+      <footer className="vitals">
+        <Meter label="Social" value={stats.social} display={STAT_META.social.format(stats.social)} max={10} />
+        <Meter label="Skills" value={stats.skills} display={STAT_META.skills.format(stats.skills)} max={10} />
+        <Meter
           label="Health"
-          value={STAT_META.health.format(stats.health)}
-          align="center"
+          value={stats.health}
+          display={STAT_META.health.format(stats.health)}
+          max={100}
           tone={lowHealth ? 'bad' : underSlept ? 'warn' : null}
         />
-        <Stat
+        <Meter
           label="Spare"
-          value={STAT_META.spareTime.format(stats.spareTime)}
-          align="center"
+          value={stats.spareTime}
+          display={STAT_META.spareTime.format(stats.spareTime)}
+          max={24}
           tone={underSlept ? 'bad' : null}
         />
       </footer>

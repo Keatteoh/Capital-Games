@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Capital Games — Immersive (dark arcade)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@500;600;700&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #0d2a22;
+    --panel: #12382d;
+    --fg: #f3f1e8;
+    --muted: #9fb8ad;
+    --ink: #050f0c;
+    --accent: #f062b0;
+    --lime: #c8f169;
+    --danger: #ff6b5a;
+    --font-display: 'Oswald', 'Arial Narrow', sans-serif;
+    --font-body: 'Inter', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --outline: 3px solid var(--ink);
+    --pop: 4px 4px 0 var(--ink);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #071a15; font-family: var(--font-body); color: var(--fg); }
+  .caption { text-align: center; font-family: var(--font-display); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 24px 0 12px; }
+
+  .device { width: 393px; height: 852px; border-radius: 56px; padding: 12px; background: #1b1b1d; box-shadow: 0 30px 60px rgba(0,0,0,.5), inset 0 0 0 2px #3a3a3e; margin-bottom: 32px; }
+  .screen { position: relative; width: 100%; height: 100%; border-radius: 44px; overflow: hidden; background: var(--bg); display: flex; flex-direction: column;
+    background-image: radial-gradient(rgba(200,241,105,.06) 1px, transparent 1px); background-size: 14px 14px; }
+  .island { position: absolute; top: 11px; left: 50%; transform: translateX(-50%); width: 122px; height: 35px; border-radius: 20px; background: #000; z-index: 5; }
+  .statusbar { height: 54px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 6px 30px 0 34px; font-weight: 600; font-size: 16px; color: #fff; }
+  .statusbar .icons { display: flex; gap: 6px; align-items: center; fill: #fff; }
+  .home { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); width: 134px; height: 5px; border-radius: 3px; background: #fff; }
+
+  .app { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 2px 14px 26px; }
+  .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+  /* Scoreboard */
+  .board { display: grid; grid-template-columns: auto 1fr 1fr; border: var(--outline); border-radius: 14px; background: var(--panel); box-shadow: var(--pop); overflow: hidden; }
+  .cell { padding: 6px 10px; border-right: var(--outline); }
+  .cell:last-child { border-right: none; }
+  .cell .l { font-family: var(--font-display); font-size: 11px; letter-spacing: .12em; color: var(--muted); text-transform: uppercase; }
+  .cell .v { font-size: 18px; font-weight: 700; }
+  .cell.bad .v { color: var(--danger); }
+  .cell button { all: unset; cursor: pointer; display: block; }
+
+  /* Debt meter: how close to game over */
+  .meter { border: var(--outline); border-radius: 12px; background: var(--panel); padding: 8px 10px; box-shadow: var(--pop); }
+  .meter .top { display: flex; justify-content: space-between; font-family: var(--font-display); text-transform: uppercase; letter-spacing: .08em; font-size: 12px; }
+  .meter .top b { color: var(--accent); }
+  .track { position: relative; height: 12px; margin-top: 6px; border: 2px solid var(--ink); border-radius: 6px; background: linear-gradient(90deg, var(--danger) 0 0) 0 0/19% 100% no-repeat, #0a2019; }
+  .ticks { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 3px; }
+
+  .quest { display: flex; align-items: center; gap: 8px; font-family: var(--font-display); text-transform: uppercase; letter-spacing: .06em; font-size: 15px; }
+  .quest .badge { background: var(--lime); color: var(--ink); border: var(--outline); border-radius: 8px; padding: 1px 8px; font-size: 13px; }
+  .quest .z { margin-left: auto; font-family: var(--font-body); text-transform: none; letter-spacing: 0; font-size: 12px; color: #d6c2ff; }
+
+  /* Board-game card */
+  .card { flex: 1; min-height: 0; position: relative; border: var(--outline); border-radius: 18px; background: var(--fg); color: var(--ink); box-shadow: 6px 6px 0 var(--ink); display: flex; flex-direction: column; overflow: hidden; }
+  .card .head { background: var(--lime); border-bottom: var(--outline); padding: 6px 12px; display: flex; justify-content: space-between; font-family: var(--font-display); letter-spacing: .1em; text-transform: uppercase; font-size: 13px; }
+  .card .pic { flex: 1; min-height: 0; display: grid; place-items: center; font-size: 80px; background: repeating-linear-gradient(-45deg, #ece8da 0 10px, #e4dfcf 10px 20px); border-bottom: var(--outline); position: relative; }
+  .dice { position: absolute; right: 10px; bottom: -22px; width: 76px; height: 76px; border-radius: 50%; background: var(--accent); color: #fff; border: var(--outline); box-shadow: var(--pop); display: grid; place-items: center; text-align: center; line-height: 1; transform: rotate(-8deg); }
+  .dice b { font-family: var(--font-display); font-size: 26px; display: block; }
+  .dice small { font-size: 9px; font-weight: 700; letter-spacing: .08em; }
+  .card h1 { font-family: var(--font-display); font-weight: 700; text-transform: uppercase; font-size: 24px; line-height: 1.05; margin: 14px 96px 4px 14px; }
+  .card .sub { margin: 0 14px 12px; font-size: 13px; font-weight: 600; color: #3b4b45; }
+
+  .split { display: grid; grid-template-columns: 1fr 1fr; border: var(--outline); border-radius: 14px; overflow: hidden; box-shadow: var(--pop); }
+  .split button { border: none; min-height: 64px; padding: 8px 12px; cursor: pointer; text-align: left; font-family: var(--font-body); }
+  .split .apply { background: var(--accent); color: #fff; border-right: var(--outline); }
+  .split .skip { background: var(--panel); color: var(--fg); text-align: right; }
+  .split strong { display: block; font-family: var(--font-display); font-size: 22px; text-transform: uppercase; letter-spacing: .04em; }
+  .split span { font-size: 11px; font-weight: 600; opacity: .9; }
+
+  /* Meters bottom */
+  .vitals { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
+  .vital .row { display: flex; justify-content: space-between; font-family: var(--font-display); letter-spacing: .08em; text-transform: uppercase; font-size: 12px; color: var(--muted); }
+  .vital .row b { color: var(--fg); }
+  .vital.bad .row b { color: var(--danger); }
+  .seg { display: grid; grid-template-columns: repeat(10, 1fr); gap: 2px; margin-top: 3px; }
+  .seg i { height: 8px; border-radius: 2px; background: #224a3e; }
+  .seg i.on { background: var(--lime); }
+  .vital.bad .seg i.on { background: var(--danger); }
+</style>
+</head>
+<body>
+<div>
+  <p class="caption">Immersive — dark arcade</p>
+  <div class="device">
+    <div class="screen">
+      <div class="island"></div>
+      <div class="statusbar">
+        <span>9:41</span>
+        <span class="icons" aria-hidden="true">
+          <svg width="18" height="12" viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5" width="3" height="7" rx="1"/><rect x="10" y="2.5" width="3" height="9.5" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+          <svg width="16" height="12" viewBox="0 0 16 12"><path d="M8 2.5c2.3 0 4.4.9 6 2.4l1.2-1.3C13.3 1.8 10.8.7 8 .7S2.7 1.8.8 3.6L2 4.9c1.6-1.5 3.7-2.4 6-2.4zm0 3.6c1.3 0 2.5.5 3.4 1.3l1.2-1.3C11.4 5 9.8 4.3 8 4.3S4.6 5 3.4 6.1l1.2 1.3C5.5 6.6 6.7 6.1 8 6.1zm0 3.5c.6 0 1.1.2 1.5.6L8 11.8 6.5 10.2c.4-.4.9-.6 1.5-.6z"/></svg>
+          <svg width="27" height="13" viewBox="0 0 27 13"><rect x=".5" y=".5" width="23" height="12" rx="3.5" fill="none" stroke="#fff" opacity=".4"/><rect x="2" y="2" width="18" height="9" rx="2"/><rect x="24.5" y="4.5" width="2" height="4" rx="1" opacity=".4"/></svg>
+        </span>
+      </div>
+
+      <div class="app">
+        <div class="board">
+          <div class="cell"><div class="l">Day</div><div class="v num">08</div></div>
+          <div class="cell bad"><button type="button"><div class="l">Income ▾</div><div class="v num">-$15/wk</div></button></div>
+          <div class="cell bad"><div class="l">Wealth</div><div class="v num">-$19</div></div>
+        </div>
+
+        <div class="meter" role="alert">
+          <div class="top"><span>Debt danger</span><b>Out at -$100</b></div>
+          <div class="track" aria-label="Debt: 19 of 100 dollars"></div>
+          <div class="ticks num"><span>$0</span><span>-$50</span><span>-$100</span></div>
+        </div>
+
+        <div class="quest"><span class="badge">Quest 1/2</span> Get a job <span class="z">😴 Under-slept</span></div>
+
+        <article class="card">
+          <div class="head"><span>Job offer</span><span>Week 2</span></div>
+          <div class="pic" aria-hidden="true">🛒
+            <div class="dice"><div><b>40%</b><small>CHANCE</small></div></div>
+          </div>
+          <h1>Supermarket is hiring shelf stackers</h1>
+          <p class="sub">Win: +$150/wk · Takes 14 days · Costs $5</p>
+        </article>
+
+        <div class="split">
+          <button class="apply" type="button"><strong>← Apply</strong><span>Roll the dice</span></button>
+          <button class="skip" type="button"><strong>Skip →</strong><span>Keep looking</span></button>
+        </div>
+
+        <div class="vitals">
+          <div class="vital"><div class="row"><span>Social</span><b class="num">1</b></div><div class="seg"><i class="on"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+          <div class="vital"><div class="row"><span>Skills</span><b class="num">1</b></div><div class="seg"><i class="on"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+          <div class="vital bad"><div class="row"><span>Health</span><b class="num">40</b></div><div class="seg"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+          <div class="vital bad"><div class="row"><span>Spare</span><b class="num">4h</b></div><div class="seg"><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+        </div>
+      </div>
+      <div class="home"></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

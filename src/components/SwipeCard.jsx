@@ -6,15 +6,14 @@ const DRAG_START = 8;       // px of movement before a touch counts as a drag (v
 
 function Effects({ choice, stats }) {
   const apply = choice.apply;
-  const days = choice.days;
   return (
     <ul className="effects">
       {apply && (
-        <li className="chance">
-          🎲 {Math.round(jobChance(apply, stats) * 100)}% · {formatFlow(apply.job)}
+        <li className="pos">
+          🎲 {Math.round(jobChance(apply, stats) * 100)}% → {formatFlow(apply.job)}
         </li>
       )}
-      {days && <li className="effect-note">⏳ {days} days</li>}
+      {choice.days && <li>⏳ {choice.days} days</li>}
       {(choice.recurring ?? []).map((flow) => (
         <li key={flow.label} className={flow.amount >= 0 ? 'pos' : 'neg'}>
           {formatFlow(flow)}
@@ -27,6 +26,12 @@ function Effects({ choice, stats }) {
       ))}
     </ul>
   );
+}
+
+function cardKind(decision) {
+  if (decision.event) return '⚡ Surprise!';
+  if (decision.left.apply) return 'Job offer';
+  return 'Decision';
 }
 
 export default function SwipeCard({ decision, stats, onChoose }) {
@@ -52,8 +57,7 @@ export default function SwipeCard({ decision, stats, onChoose }) {
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  // A press only becomes a drag after moving a few px, so taps on the
-  // choice buttons still register as clicks.
+  // A press only becomes a drag after moving a few px.
   const onPointerDown = (e) => {
     if (leaving) return;
     pointer.current = { id: e.pointerId, x: e.clientX };
@@ -80,34 +84,48 @@ export default function SwipeCard({ decision, stats, onChoose }) {
   const progress = Math.min(Math.abs(dx) / SWIPE_THRESHOLD, 1);
   const activeSide = dx < -10 ? 'left' : dx > 10 ? 'right' : null;
   const isImageUrl = /[./]/.test(decision.image);
+  const apply = decision.left.apply;
 
   return (
-    <div
-      className={`card ${dragging ? 'dragging' : ''} ${decision.event ? 'card-event' : ''}`}
-      style={{ transform: `translateX(${dx}px) rotate(${dx / 18}deg)` }}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
-    >
-      <div className="stamp stamp-left" style={{ opacity: activeSide === 'left' ? progress : 0 }}>
-        {decision.left.label}
-      </div>
-      <div className="stamp stamp-right" style={{ opacity: activeSide === 'right' ? progress : 0 }}>
-        {decision.right.label}
+    <>
+      <div className="card-slot">
+        <article
+          className={`card ${dragging ? 'dragging' : ''} ${decision.event ? 'card-event' : ''}`}
+          style={{ transform: `translateX(${dx}px) rotate(${dx / 18}deg)` }}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+        >
+          <div className="stamp stamp-left" style={{ opacity: activeSide === 'left' ? progress : 0 }}>
+            {decision.left.label}
+          </div>
+          <div className="stamp stamp-right" style={{ opacity: activeSide === 'right' ? progress : 0 }}>
+            {decision.right.label}
+          </div>
+
+          <div className="card-head">
+            <span>{cardKind(decision)}</span>
+            <span>Week {Math.ceil(stats.day / 7)}</span>
+          </div>
+          <div className="card-image">
+            {isImageUrl ? (
+              <img src={decision.image} alt="" draggable="false" />
+            ) : (
+              <span className="emoji" aria-hidden="true">{decision.image}</span>
+            )}
+            {apply && (
+              <div className="dice" aria-label={`${Math.round(jobChance(apply, stats) * 100)}% chance`}>
+                <b>{Math.round(jobChance(apply, stats) * 100)}%</b>
+                <small>Chance</small>
+              </div>
+            )}
+          </div>
+          <h1 className={`card-prompt ${apply ? 'has-dice' : ''}`}>{decision.prompt}</h1>
+        </article>
       </div>
 
-      <div className="card-image">
-        {decision.event && <span className="event-badge">⚡ Surprise!</span>}
-        {isImageUrl ? (
-          <img src={decision.image} alt="" draggable="false" />
-        ) : (
-          <span className="emoji" aria-hidden="true">{decision.image}</span>
-        )}
-      </div>
-      <p className="card-prompt">{decision.prompt}</p>
-
-      <div className="choices">
+      <div className="split">
         {['left', 'right'].map((side) => (
           <button
             key={side}
@@ -115,13 +133,13 @@ export default function SwipeCard({ decision, stats, onChoose }) {
             className={`choice choice-${side} ${activeSide === side ? 'active' : ''}`}
             onClick={() => !dragging && commit(side)}
           >
-            <span className="choice-label">
+            <strong>
               {side === 'left' ? `← ${decision.left.label}` : `${decision.right.label} →`}
-            </span>
+            </strong>
             <Effects choice={decision[side]} stats={stats} />
           </button>
         ))}
       </div>
-    </div>
+    </>
   );
 }

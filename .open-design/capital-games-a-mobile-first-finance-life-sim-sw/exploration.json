@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "explorationId": "capital-games-a-mobile-first-finance-life-sim-sw",
+  "title": "Capital Games: a mobile-first finance life-sim swipe game…",
+  "brief": "Capital Games: a mobile-first finance life-sim swipe game. Mock up the main swipe-card screen on an iPhone. Top HUD: Time (Day 8 · Week 2) top-left, Income (-$15/wk, tappable) and Wealth (-$19, in debt) top-right. Under it: goal strip \"🎯 1/2 Get a job\" and warning pills \"In debt · out at -$100\" and \"Under-slept · health low\". Centre: a swipeable decision card with an image (shopping cart), prompt \"The supermarket is hiring shelf stackers. Apply?\", two tappable choices: left \"← Apply\" (🎲 40% chance · +$150/wk, ⏳ 14 days, -$5 once) and right \"Skip →\". Bottom stats bar: Social 1, Skills 1, Health 40 (low), Spare 4h (under-slept). Show one card tilted mid-swipe with an APPLY stamp is optional. Compare 3 design systems for the game's look.",
+  "skillId": "mobile-app",
+  "skillMode": "prototype",
+  "axis": "custom",
+  "createdAt": "2026-11-19T16:23:05.667Z",
+  "directions": [
+    {
+      "id": "lingo-bright-playful",
+      "label": "Lingo — bright & playful",
+      "axis": "custom",
+      "summary": "Apply the 'lingo' design system: light theme, bright green accent #58cc02, Nunito, chunky rounded shapes with tactile 3D bottom borders, …",
+      "spec": "### Lingo — bright & playful  `(id: lingo-bright-playful)`\n\nApply the 'lingo' design system: light theme, bright green accent #58cc02, Nunito, chunky rounded shapes with tactile 3D bottom borders, friendly and game-like (think a cheerful learning app). Stats as rounded chips with icons; choices as big 3D push buttons.\n",
+      "entryPath": ".open-design/capital-games-a-mobile-first-finance-life-sim-sw/lingo-bright-playful.html"
+    },
+    {
+      "id": "claymorphism-soft-tactile",
+      "label": "Claymorphism — soft & tactile",
+      "axis": "custom",
+      "summary": "Apply the 'claymorphism' design system: light theme, warm orange/terracotta accent, Poppins, puffy soft 3D clay surfaces with layered inn…",
+      "spec": "### Claymorphism — soft & tactile  `(id: claymorphism-soft-tactile)`\n\nApply the 'claymorphism' design system: light theme, warm orange/terracotta accent, Poppins, puffy soft 3D clay surfaces with layered inner/outer shadows, pastel stat tiles. Calm, cosy, approachable money game.\n",
+      "entryPath": ".open-design/capital-games-a-mobile-first-finance-life-sim-sw/claymorphism-soft-tactile.html"
+    },
+    {
+      "id": "immersive-dark-arcade",
+      "label": "Immersive — dark arcade",
+      "axis": "custom",
+      "summary": "Apply the 'immersive' design system: dark deep-green canvas, chunky comic-panel outlines, Oswald condensed display type, bright magenta #…",
+      "spec": "### Immersive — dark arcade  `(id: immersive-dark-arcade)`\n\nApply the 'immersive' design system: dark deep-green canvas, chunky comic-panel outlines, Oswald condensed display type, bright magenta #f062b0 reserved for highlights. Feels like a bold arcade/board-game HUD with high drama around debt and health.\n",
+      "entryPath": ".open-design/capital-games-a-mobile-first-finance-life-sim-sw/immersive-dark-arcade.html"
+    }
+  ]
+}

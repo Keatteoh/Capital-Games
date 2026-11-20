@@ -133,10 +133,10 @@ export const DECISIONS = [
   {
     id: 'bootcamp',
     image: '💻',
-    prompt: 'Enrol in a 2-week coding bootcamp?',
+    prompt: 'Enroll in a 2-week coding bootcamp?',
     when: (s) => !hasJob(s),
     left: {
-      label: 'Enrol',
+      label: 'Enroll',
       days: 14,
       effects: { skills: 3, spareTime: -8 },
       recurring: [{ label: 'Coding bootcamp', amount: -25, every: 'daily', durationDays: 14 }],

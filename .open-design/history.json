@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "entryPath": ".open-design/capital-games-a-mobile-first-finance-life-sim-sw/lingo-bright-playful.html",
+      "title": "Capital Games — Lingo (bright & playful)",
+      "skillId": "od:prototype:mobile-app",
+      "designSystemId": "lingo",
+      "explorationId": "capital-games-a-mobile-first-finance-life-sim-sw",
+      "directionId": "lingo-bright-playful",
+      "date": "2026-11-19T16:25:02.855Z",
+      "signature": {
+        "accent": "#58cc02",
+        "displayFont": "Nunito",
+        "bodyFont": "Nunito",
+        "theme": "light",
+        "hero": "centred"
+      }
+    },
+    {
+      "entryPath": ".open-design/capital-games-a-mobile-first-finance-life-sim-sw/claymorphism-soft-tactile.html",
+      "title": "Capital Games — Claymorphism (soft & tactile)",
+      "skillId": "od:prototype:mobile-app",
+      "designSystemId": "claymorphism",
+      "explorationId": "capital-games-a-mobile-first-finance-life-sim-sw",
+      "directionId": "claymorphism-soft-tactile",
+      "date": "2026-11-19T16:25:02.874Z",
+      "signature": {
+        "accent": "#b46a46",
+        "displayFont": "Poppins",
+        "bodyFont": "Poppins",
+        "theme": "light",
+        "hero": "centred"
+      }
+    },
+    {
+      "entryPath": ".open-design/capital-games-a-mobile-first-finance-life-sim-sw/immersive-dark-arcade.html",
+      "title": "Capital Games — Immersive (dark arcade)",
+      "skillId": "od:prototype:mobile-app",
+      "designSystemId": "immersive",
+      "explorationId": "capital-games-a-mobile-first-finance-life-sim-sw",
+      "directionId": "immersive-dark-arcade",
+      "date": "2026-11-19T16:25:02.886Z",
+      "signature": {
+        "accent": "#f062b0",
+        "displayFont": "Oswald",
+        "bodyFont": "Inter",
+        "theme": "dark",
+        "hero": "centred"
+      }
+    }
+  ]
+}
