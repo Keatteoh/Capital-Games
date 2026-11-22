@@ -13,7 +13,21 @@ export const PAYDAY = FRI;
 export const STARTING_DEBT = -400;       // you start the game owing this much
 export const DEBT_HEALTH_LOSS_PER_WEEK = 2; // health lost each week you're in debt
 const COST_OF_LIVING = { label: 'Cost of living', amount: -20, every: 'weekly', weekday: MON };
-export const EVENT_CHANCE = 0.25; // chance each turn that a surprise event interrupts the deck
+// Surprise events: each week rolls 0–2 of them, on random days of that week.
+export const EVENTS_PER_WEEK = [0, 2]; // [min, max]
+const weekOf = (day) => Math.floor((day - 1) / 7);
+
+// Picks which days of `day`'s week get a surprise event (only days from `day` on).
+function planEvents(day, rng = Math.random) {
+  const [min, max] = EVENTS_PER_WEEK;
+  const count = min + Math.floor(rng() * (max - min + 1));
+  const week = weekOf(day);
+  const open = [];
+  for (let d = Math.max(day, 2); d <= week * 7 + 7; d++) open.push(d); // never on day 1
+  const days = [];
+  while (days.length < count && open.length) days.push(open.splice(Math.floor(rng() * open.length), 1)[0]);
+  return { week, days };
+}
 
 // Sleep & health: SLEEP_THRESHOLD hours of spare time or less means you're under-slept.
 export const SLEEP_THRESHOLD = 7;
@@ -148,6 +162,7 @@ export function createInitialStats() {
     queue: [],          // commitment ids waiting for a "keep or drop?" card (from therapy)
     nextTherapy: null,  // day the next therapy session is due
     house: null,        // the house you bought (see makeHouse)
+    eventPlan: planEvents(1), // { week, days }: which days this week get a surprise event
     usedCards: [],      // one-off cards already seen
     goalsDone: [],
   };
@@ -563,7 +578,7 @@ export function reassessCard(c) {
 }
 
 // ---------- Surprise events ----------
-// Same shape as cards, but they interrupt the deck at random (EVENT_CHANCE per turn).
+// Same shape as cards, but they interrupt the deck on the days planned by planEvents.
 // Events are repeatable unless `once: true`. `big: true` events wait until
 // BIG_EXPENSES_AFTER swipes have passed.
 export const EVENTS = [
@@ -1375,7 +1390,8 @@ export function drawCard(stats, lastId = null, rng = Math.random) {
       (!c.big || stats.swipes >= BIG_EXPENSES_AFTER) &&
       (!c.when || c.when(stats)));
 
-  if (stats.day > 1 && rng() < EVENT_CHANCE) {
+  // A planned day that a multi-day card skipped over still fires, on the next swipe that week.
+  if (stats.eventPlan.days.some((d) => d <= stats.day)) {
     const event = pickWeighted(eligible(EVENTS), stats, rng);
     if (event) return event;
   }
@@ -1548,7 +1564,13 @@ export function applyChoice(stats, card, side, rng = Math.random) {
       }
     }
   }
+  if (card.event) {
+    const due = next.eventPlan.days.filter((d) => d <= stats.day);
+    const used = Math.min(...due);
+    next.eventPlan = { ...next.eventPlan, days: next.eventPlan.days.filter((d) => d !== used) };
+  }
   next.day += days;
+  if (weekOf(next.day) !== next.eventPlan.week) next.eventPlan = planEvents(next.day, rng);
   next.flows = next.flows.filter((f) => f.endDay === null || f.endDay > next.day);
   next.spareTime = Math.max(0, next.spareTime);
   next.social = Math.max(0, next.social);
