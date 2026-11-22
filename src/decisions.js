@@ -95,6 +95,29 @@ function makeFlow(def, startDay) {
 }
 
 // ---------- Starting state ----------
+// A random player character: age group, gender and skin tone change every game.
+const SKIN_TONES = ['\u{1F3FB}', '\u{1F3FC}', '\u{1F3FD}', '\u{1F3FE}', '\u{1F3FF}'];
+const CHARACTERS = {
+  younger: [
+    { base: '🧑', gender: 'person' },
+    { base: '👨', gender: 'man' },
+    { base: '👩', gender: 'woman' },
+  ],
+  older: [
+    { base: '🧓', gender: 'person' },
+    { base: '👴', gender: 'man' },
+    { base: '👵', gender: 'woman' },
+  ],
+};
+
+export function makeCharacter(rng = Math.random) {
+  const age = 19 + Math.floor(rng() * 50); // 19–68
+  const group = age >= 55 ? CHARACTERS.older : CHARACTERS.younger;
+  const c = group[Math.floor(rng() * group.length)];
+  const tone = SKIN_TONES[Math.floor(rng() * SKIN_TONES.length)];
+  return { emoji: c.base + tone, gender: c.gender, age };
+}
+
 export function createInitialStats() {
   const allowance = randomInt(0, 15);
   const flows = [makeFlow(COST_OF_LIVING, 1)];
@@ -105,10 +128,11 @@ export function createInitialStats() {
     day: 1,
     swipes: 0,          // choices made so far
     wealth: STARTING_DEBT,
-    social: 0,
+    social: randomInt(1, 4),
     spareTime: 24,
     health: 100,
-    skills: 0,
+    skills: randomInt(1, 4),
+    character: makeCharacter(),
     flows,
     flags: [],          // things the player has learned/unlocked, e.g. 'chainsaw'
     commitments: [],    // ongoing hobbies etc.: { id, label, image, hours, keepPrompt, dropLabel }

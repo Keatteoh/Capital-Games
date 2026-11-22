@@ -118,12 +118,64 @@ function Toast({ last, onClose }) {
   );
 }
 
+// The start screen: who you are, what you start with, and the goals.
+function Intro({ stats, onStart }) {
+  const { character } = stats;
+  const net = weeklyNet(stats.flows);
+  return (
+    <div className="summary intro">
+      <div className="intro-who">
+        <span className="intro-emoji" role="img" aria-label={`A ${character.age}-year-old ${character.gender}`}>
+          {character.emoji}
+        </span>
+        <div>
+          <h2>New game</h2>
+          <p className="muted">Age {character.age}</p>
+        </div>
+      </div>
+
+      <h3>You start with</h3>
+      <ul className="intro-list">
+        <li><span>Debt</span><b className="num neg">{money(stats.wealth)}</b></li>
+        {stats.flows.map((f) => (
+          <li key={f.id}>
+            <span>{f.label}</span>
+            <b className={`num ${f.amount >= 0 ? 'pos' : 'neg'}`}>{formatFlow(f)}</b>
+          </li>
+        ))}
+        {!stats.flows.some((f) => f.amount > 0) && (
+          <li><span>Allowance from parents</span><b className="num muted">None</b></li>
+        )}
+        <li className="intro-total">
+          <span>Weekly income</span>
+          <b className={`num ${net >= 0 ? 'pos' : 'neg'}`}>{net >= 0 ? '+' : ''}{money(net)}/wk</b>
+        </li>
+        <li><span>Social</span><b className="num">{stats.social}</b></li>
+        <li><span>Skills</span><b className="num">{stats.skills}</b></li>
+      </ul>
+
+      <h3>Goals</h3>
+      <ol className="intro-goals">
+        {GOALS.map((g) => (
+          <li key={g.id}>
+            <b>{g.title}</b>
+            <span className="muted">{g.hint}</span>
+          </li>
+        ))}
+      </ol>
+
+      <button type="button" className="btn btn-primary" onClick={onStart}>Start</button>
+    </div>
+  );
+}
+
 function newGame() {
   const stats = createInitialStats();
-  const game = { stats, card: drawCard(stats), turn: 0, last: null, status: 'playing', lostTo: null };
+  const game = { stats, card: drawCard(stats), turn: 0, last: null, status: 'intro', lostTo: null };
   // Dev only: add ?stress to the URL to see the busiest screen (debt, under-slept,
   // outcome toast showing) for layout testing.
   if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('stress')) {
+    game.status = 'playing';
     Object.assign(stats, { wealth: -19, spareTime: 4, health: 40, day: 8 });
     game.last = {
       outcome: 'You joined the gym and recognise a few regulars already.',
@@ -135,6 +187,7 @@ function newGame() {
   }
   // Dev only: ?card=<id> starts on that card, e.g. ?card=party.
   const forced = import.meta.env.DEV && new URLSearchParams(window.location.search).get('card');
+  if (forced) game.status = 'playing';
   if (forced === 'house') game.card = houseCard(makeHouse());
   else if (forced === 'reassess') game.card = reassessCard({ id: 'guitar', label: 'Guitar', image: '🎸', hours: 3, keepPrompt: 'Keep up the guitar lessons?' });
   else if (forced) game.card = [...DECISIONS, ...EVENTS].find((c) => c.id === forced) ?? game.card;
@@ -184,6 +237,7 @@ export default function App() {
   const underSlept = isUnderSlept(stats);
   const lowHealth = stats.health < LOW_HEALTH;
   const playing = status === 'playing';
+  const start = () => setGame((g) => ({ ...g, status: 'playing' }));
 
   return (
     <div className="app">
@@ -259,7 +313,9 @@ export default function App() {
       )}
 
       <main className="stage">
-        {playing ? (
+        {status === 'intro' ? (
+          <Intro stats={stats} onStart={start} />
+        ) : playing ? (
           <>
             <SwipeCard key={game.turn} decision={card} stats={stats} onChoose={choose} />
             {last && showToast && <Toast last={last} onClose={hideToast} />}

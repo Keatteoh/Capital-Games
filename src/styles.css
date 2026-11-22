@@ -465,6 +465,41 @@ button.cell:active { background: var(--panel-2); }
 .summary-won h2 { color: var(--lime); }
 .muted { color: var(--muted); }
 
+/* ---------- Start screen ---------- */
+.intro h2 { margin: 0; }
+.intro h3 {
+  margin: 16px 0 6px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.intro-who { display: flex; align-items: center; gap: 14px; }
+.intro-who p { margin: 0; }
+.intro-emoji {
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  flex-shrink: 0;
+  font-size: 48px;
+  line-height: 1;
+  border: var(--outline);
+  border-radius: 18px;
+  background: var(--paper);
+  box-shadow: var(--pop);
+}
+.summary .intro-list { margin: 0; line-height: 1.5; font-size: 14px; }
+.intro-list li { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; border-bottom: 1px dashed #2b5649; }
+.intro-list li:last-child { border-bottom: none; }
+.intro-list .intro-total { font-weight: 700; }
+.intro-goals { margin: 0 0 8px; padding-left: 20px; font-size: 14px; }
+.intro-goals li { margin-bottom: 8px; }
+.intro-goals li::marker { font-family: var(--font-display); color: var(--lime); }
+.intro-goals b { display: block; }
+.intro-goals span { font-size: 12px; line-height: 1.35; display: block; }
+
 .btn {
   width: 100%;
   margin-top: 8px;
