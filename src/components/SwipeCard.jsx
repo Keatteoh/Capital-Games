@@ -134,7 +134,16 @@ export default function SwipeCard({ decision, stats, onChoose }) {
             <span>Week {Math.ceil(stats.day / 7)}</span>
           </div>
           <div className="card-image">
-            {isImageUrl ? (
+            {decision.details ? (
+              <div className="listing">
+                <span className="listing-emoji" aria-hidden="true">{decision.image}</span>
+                <dl className="specs">
+                  {decision.details.map(([k, v]) => (
+                    <div key={k}><dt>{k}</dt><dd>{v}</dd></div>
+                  ))}
+                </dl>
+              </div>
+            ) : isImageUrl ? (
               <img src={decision.image} alt="" draggable="false" />
             ) : (
               <span className="emoji" aria-hidden="true">{decision.image}</span>

@@ -4,7 +4,11 @@ import {
   GOALS,
   DECISIONS,
   EVENTS,
-  GAME_OVER_AT,
+  houseCard,
+  makeHouse,
+  STARTING_DEBT,
+  DEBT_HEALTH_LOSS_PER_WEEK,
+  isIncomeStream,
   LOW_HEALTH,
   STAT_META,
   isUnderSlept,
@@ -47,22 +51,17 @@ function Meter({ label, value, display, max, tone }) {
   );
 }
 
-// How close the player is to the game-over debt line.
+// How much debt is left. Every week in debt costs health.
 function DebtBar({ wealth }) {
-  const pct = Math.min(100, (Math.abs(wealth) / Math.abs(GAME_OVER_AT)) * 100);
+  const pct = Math.min(100, (Math.abs(wealth) / Math.abs(STARTING_DEBT)) * 100);
   return (
     <div className="debt" role="alert">
       <div className="debt-top">
-        <span>⚠️ Debt danger</span>
-        <b>Out at {money(GAME_OVER_AT)}</b>
+        <span>💳 In debt: {money(wealth)}</span>
+        <b>-{DEBT_HEALTH_LOSS_PER_WEEK} health/wk</b>
       </div>
-      <div className="debt-track" aria-label={`Debt ${money(wealth)} of ${money(GAME_OVER_AT)}`}>
+      <div className="debt-track" aria-label={`Debt ${money(wealth)}`}>
         <i style={{ width: `${pct}%` }} />
-      </div>
-      <div className="debt-ticks num">
-        <span>$0</span>
-        <span>{money(GAME_OVER_AT / 2)}</span>
-        <span>{money(GAME_OVER_AT)}</span>
       </div>
     </div>
   );
@@ -111,7 +110,9 @@ function Toast({ last, onClose }) {
       <p>{last.outcome}</p>
       <Ledger ledger={last.ledger} />
       <Gains gains={last.gains} />
-      {last.healthDelta < 0 && <p className="health-msg">😴 Under-slept: health {last.healthDelta}</p>}
+      {last.healthDelta < 0 && (
+        <p className="health-msg">{last.healthCauses.join(' · ')}: health {last.healthDelta}</p>
+      )}
     </button>
   );
 }
@@ -127,12 +128,14 @@ function newGame() {
       outcome: 'You joined the gym and recognise a few regulars already.',
       ledger: { 'Allowance from parents': 3, 'Cost of living': -20, 'Gym membership': -20 },
       goalMsg: '',
-      healthDelta: -10,
+      healthDelta: -15,
+      healthCauses: ['😴 Under-slept', '💳 In debt'],
     };
   }
   // Dev only: ?card=<id> starts on that card, e.g. ?card=party.
   const forced = import.meta.env.DEV && new URLSearchParams(window.location.search).get('card');
-  if (forced) game.card = [...DECISIONS, ...EVENTS].find((c) => c.id === forced) ?? game.card;
+  if (forced === 'house') game.card = houseCard(makeHouse());
+  else if (forced) game.card = [...DECISIONS, ...EVENTS].find((c) => c.id === forced) ?? game.card;
   return game;
 }
 
@@ -159,6 +162,7 @@ export default function App() {
         gains: result.gains,
         goalMsg,
         healthDelta: result.healthDelta,
+        healthCauses: result.healthCauses,
       },
       status: result.gameOver ? 'lost' : allDone ? 'won' : !nextCard ? 'out' : 'playing',
       lostTo: result.gameOver,
@@ -200,7 +204,7 @@ export default function App() {
               <ul>
                 {stats.flows.map((f) => (
                   <li key={f.id}>
-                    <span>{f.label}</span>
+                    <span>{isIncomeStream(f) && '💼 '}{f.label}</span>
                     <span className={f.amount >= 0 ? 'pos' : 'neg'}>
                       {formatFlow(f)}
                       {f.scheduled ? (
@@ -240,6 +244,7 @@ export default function App() {
             <button type="button" className="quest" onClick={() => setShowHint((v) => !v)}>
               <span className="quest-badge">Quest {GOALS.indexOf(goal) + 1}/{GOALS.length}</span>
               <span className="quest-title">{goal.title}</span>
+              {goal.progress && <span className="quest-progress num">{goal.progress(stats)}</span>}
               {underSlept ? (
                 <span className="quest-sleep" role="alert">😴 Under-slept{lowHealth ? ' · health low' : ''}</span>
               ) : (
@@ -260,15 +265,15 @@ export default function App() {
         ) : (
           <div className={`summary summary-${status}`}>
             <h2>
-              {status === 'lost' && (game.lostTo === 'health' ? '🥵 Burned out' : '💸 Game over')}
+              {status === 'lost' && '🥵 Burned out'}
               {status === 'won' && '🏆 You made it!'}
               {status === 'out' && 'No more decisions (for now)'}
             </h2>
-            {status === 'lost' && game.lostTo === 'debt' && (
-              <p>Your debt hit {money(stats.wealth)} on day {stats.day}.</p>
-            )}
-            {status === 'lost' && game.lostTo === 'health' && (
-              <p>Weeks without enough sleep wore your health down to 0 on day {stats.day}.</p>
+            {status === 'lost' && (
+              <p>
+                {stats.wealth < 0 ? 'Debt stress' : 'Weeks without enough sleep'} wore your health down to 0 on day{' '}
+                {stats.day}.
+              </p>
             )}
             {last && <p className="muted">{last.outcome}</p>}
             <ul>
