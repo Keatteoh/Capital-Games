@@ -231,6 +231,13 @@ button.cell:active { background: var(--panel-2); }
 }
 .card-event .card-head { background: var(--accent); color: #fff; }
 
+/* Therapy and its keep-or-drop cards: lavender, so they read as a separate flow. */
+.card-reassess { background: #efe8ff; }
+.card-reassess .card-head { background: var(--sleep); }
+.card-reassess .card-image {
+  background: repeating-linear-gradient(-45deg, #e4d9ff 0 10px, #d9cbfb 10px 20px);
+}
+
 /* The picture is the part that gives way on short screens. */
 .card-image {
   position: relative;

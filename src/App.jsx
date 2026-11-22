@@ -5,6 +5,7 @@ import {
   DECISIONS,
   EVENTS,
   houseCard,
+  reassessCard,
   makeHouse,
   STARTING_DEBT,
   DEBT_HEALTH_LOSS_PER_WEEK,
@@ -135,6 +136,7 @@ function newGame() {
   // Dev only: ?card=<id> starts on that card, e.g. ?card=party.
   const forced = import.meta.env.DEV && new URLSearchParams(window.location.search).get('card');
   if (forced === 'house') game.card = houseCard(makeHouse());
+  else if (forced === 'reassess') game.card = reassessCard({ id: 'guitar', label: 'Guitar', image: '🎸', hours: 3, keepPrompt: 'Keep up the guitar lessons?' });
   else if (forced) game.card = [...DECISIONS, ...EVENTS].find((c) => c.id === forced) ?? game.card;
   return game;
 }

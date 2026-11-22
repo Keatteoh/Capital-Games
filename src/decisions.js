@@ -5,14 +5,14 @@ export const PERIOD_DAYS = { daily: 1, weekly: 7, monthly: 30 };
 const PERIOD_SHORT = { daily: 'day', weekly: 'wk', monthly: 'mo' };
 export const DEFAULT_DAYS_PER_TURN = 7;
 export const STARTING_DEBT = -400;       // you start the game owing this much
-export const DEBT_HEALTH_LOSS_PER_WEEK = 5; // health lost each week you're in debt
+export const DEBT_HEALTH_LOSS_PER_WEEK = 2; // health lost each week you're in debt
 const COST_OF_LIVING = { label: 'Cost of living', amount: -20, every: 'weekly' };
 export const EVENT_CHANCE = 0.25; // chance each turn that a surprise event interrupts the deck
 
-// Sleep & health: under SLEEP_THRESHOLD hours of spare time means you're under-slept.
-export const SLEEP_THRESHOLD = 6;
+// Sleep & health: SLEEP_THRESHOLD hours of spare time or less means you're under-slept.
+export const SLEEP_THRESHOLD = 7;
 export const LOW_HEALTH = 50;            // below this: more medical events, worse job odds
-const HEALTH_LOSS_PER_WEEK = 10;         // while under-slept
+const HEALTH_LOSS_PER_WEEK = 2;          // while under-slept
 const HEALTH_GAIN_PER_WEEK = 5;          // while rested
 const LOW_HEALTH_JOB_PENALTY = 0.15;     // subtracted from job application odds
 
@@ -40,7 +40,7 @@ const THIS_YEAR = 2026;
 export const hasJob = (s) => s.flows.some((f) => f.kind === 'job');
 export const hasFlag = (s, flag) => s.flags.includes(flag);
 export const hasCommitment = (s, id) => s.commitments.some((c) => c.id === id);
-export const isUnderSlept = (s) => s.spareTime < SLEEP_THRESHOLD;
+export const isUnderSlept = (s) => s.spareTime <= SLEEP_THRESHOLD;
 export const isHomeowner = (s) => s.house != null;
 
 // An income stream is a recurring payment from a job, business, investment or side hustle.
@@ -126,7 +126,7 @@ export const GOALS = [
   {
     id: 'debt',
     title: 'Pay off your debt',
-    hint: 'You start $400 in debt. Every week in debt costs 5 health, and you can\'t recover while you owe money. Get a job and get back to $0.',
+    hint: `You start ${money(-STARTING_DEBT)} in debt. Every week in debt costs ${DEBT_HEALTH_LOSS_PER_WEEK} health, and you can't recover while you owe money. Get a job and get back to $0.`,
     isDone: (s) => s.wealth >= 0,
     progress: (s) => (s.wealth < 0 ? `${money(-s.wealth)} left` : 'Debt free'),
   },
@@ -163,6 +163,7 @@ export const currentGoal = (s) => GOALS.find((g) => !s.goalsDone.includes(g.id))
 //              { stat: 'social', chance(stats), success: result | [results], fail: result | [results] }
 //              A list of results picks one at random (each may have `when` and `weight`).
 //              A result can use any choice field plus `job` (start a job) and `raise` (0.15 = +15% pay).
+//   pauseIncome: no job or income-stream payments for the turn (costs still apply)
 //   commit:    start an ongoing commitment (hobby, club, pet) that uses spare time every week:
 //              { id, label, image, hours, cost: { amount, every }, gains: [{ stat, amount, every,
 //                chance?, afterDays? }], keepPrompt?, dropLabel?, dropOutcome? }
@@ -507,7 +508,7 @@ const THERAPY_SESSION = {
 };
 
 // One "keep or drop?" card per commitment, queued by a therapy session.
-function reassessCard(c) {
+export function reassessCard(c) {
   return {
     id: `reassess-${c.id}`,
     queued: true,
@@ -683,6 +684,20 @@ export const EVENTS = [
       effects: { social: -1 },
       outcome: 'You sent a text instead.',
     },
+  },
+  {
+    id: 'retreat',
+    weight: (s) => (s.health < LOW_HEALTH ? 1.5 : 0.5), // occasional; likelier when run down
+    kicker: '🧘 Retreat',
+    image: '🏕️',
+    prompt: 'A week-long wellness retreat has an open spot for $50. Unplug and recharge?',
+    left: {
+      label: 'Go',
+      effects: { wealth: -50, health: 25 },
+      pauseIncome: true,
+      outcome: 'A week of hikes, naps and no phone. You came back recharged, but missed a week of pay.',
+    },
+    right: { label: 'Not now', outcome: 'You kept working.' },
   },
   {
     id: 'tax-refund',
@@ -1481,6 +1496,7 @@ export function applyChoice(stats, card, side, rng = Math.random) {
     for (const flow of next.flows) {
       if (!isDue(flow, d)) continue;
       if (flow.chance != null && rng() >= flow.chance) continue;
+      if (choice.pauseIncome && isIncomeStream(flow)) continue;
       if (flow.stat === 'wealth') {
         next.wealth += flow.amount;
         ledger[flow.label] = (ledger[flow.label] ?? 0) + flow.amount;

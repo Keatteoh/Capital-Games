@@ -24,6 +24,7 @@ function Effects({ choice, stats }) {
         </li>
       )}
       {choice.days && <li>⏳ {choice.days} days</li>}
+      {choice.pauseIncome && <li className="neg">⏸️ No income for 1 week</li>}
       {(choice.recurring ?? []).map((flow) => (
         <li key={flow.label} className={flow.amount >= 0 ? 'pos' : 'neg'}>
           {formatFlow(flow)}
@@ -115,7 +116,7 @@ export default function SwipeCard({ decision, stats, onChoose }) {
     <>
       <div className="card-slot">
         <article
-          className={`card ${dragging ? 'dragging' : ''} ${decision.event ? 'card-event' : ''}`}
+          className={`card ${dragging ? 'dragging' : ''} ${decision.event ? 'card-event' : ''} ${decision.queued || decision.therapy ? 'card-reassess' : ''}`}
           style={{ transform: `translateX(${dx}px) rotate(${dx / 18}deg)` }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
