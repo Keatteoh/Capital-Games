@@ -39,6 +39,7 @@ button { font: inherit; color: inherit; }
 .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .pos { color: var(--lime); }
 .neg { color: var(--danger); }
+.effects .warn { color: var(--warn); font-weight: 700; }
 
 /* The whole game fits the visible viewport; nothing scrolls. */
 .app {

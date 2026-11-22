@@ -188,7 +188,7 @@ function Intro({ stats, onStart }) {
 function newGame() {
   const stats = createInitialStats();
   const game = { stats, card: drawCard(stats), turn: 0, last: null, status: 'intro', lostTo: null };
-  // Dev only: add ?stress to the URL to see the busiest screen (debt, under-slept,
+  // Dev only: add ?stress to the URL to see the busiest screen (debt, overcommitted,
   // outcome toast showing) for layout testing.
   if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('stress')) {
     game.status = 'playing';
@@ -198,7 +198,7 @@ function newGame() {
       ledger: { 'Allowance from parents': 3, 'Cost of living': -20, 'Gym membership': -20 },
       goalMsg: '',
       healthDelta: -15,
-      healthCauses: ['😴 Under-slept', '💳 In debt'],
+      healthCauses: ['😴 Overcommitted', '💳 In debt'],
     };
   }
   // Dev only: ?card=<id> starts on that card, e.g. ?card=party.
@@ -331,7 +331,7 @@ export default function App() {
               <span className="quest-title">{goal.title}</span>
               {goal.progress && <span className="quest-progress num">{goal.progress(stats)}</span>}
               {underSlept ? (
-                <span className="quest-sleep" role="alert">😴 Under-slept{lowHealth ? ' · health low' : ''}</span>
+                <span className="quest-sleep" role="alert">😴 Overcommitted{lowHealth ? ' · health low' : ''}</span>
               ) : (
                 <span className="quest-more">{showHint ? '▴' : 'ⓘ'}</span>
               )}
@@ -358,7 +358,7 @@ export default function App() {
             </h2>
             {status === 'lost' && (
               <p>
-                {stats.wealth < 0 ? 'Debt stress' : 'Weeks without enough sleep'} wore your health down to 0 on day{' '}
+                {stats.wealth < 0 ? 'Debt stress' : 'Overcommitting'} wore your health down to 0 on day{' '}
                 {stats.day}.
               </p>
             )}

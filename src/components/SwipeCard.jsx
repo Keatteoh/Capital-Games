@@ -1,18 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
-import { STAT_META, money, commitmentDays, WEEKDAYS, PAYDAY, dayOfWeek, formatDelta, formatFlow, jobChance, jobPay, choiceChance, resolve } from '../decisions.js';
+import { STAT_META, money, commitmentDays, overcommitPreview, HEALTH_LOSS_PER_OVERCOMMITTED_DAY, WEEKDAYS, PAYDAY, dayOfWeek, formatDelta, formatFlow, jobChance, jobPay, choiceChance, resolve } from '../decisions.js';
 
 const SWIPE_THRESHOLD = 90; // px of drag needed to commit a choice
 const DRAG_START = 8;       // px of movement before a touch counts as a drag (vs a tap)
 
 const statName = (key) => STAT_META[key]?.label.toLowerCase();
 
-function Effects({ choice, stats }) {
+function Effects({ choice, stats, card }) {
   const { apply, check, commit } = choice;
   const effects = resolve(choice.effects, stats) ?? {};
   const pay = resolve(choice.pay, stats);
+  const over = overcommitPreview(stats, card, choice);
   const pct = (p) => `${Math.round(p * 100)}%`;
   return (
     <ul className="effects">
+      {over.days > 0 && (
+        <li className="warn">😴 Overcommits {over.days} day{over.days > 1 ? 's' : ''}: -{HEALTH_LOSS_PER_OVERCOMMITTED_DAY * over.days} health</li>
+      )}
+      {over.ongoing && <li className="warn">😴 Overcommits that day every week</li>}
       {apply && (
         <li className="pos">
           🎲 {pct(jobChance(apply, stats))} → {formatFlow({ weekday: PAYDAY, ...apply.job, amount: jobPay(apply.job, stats) })}
@@ -184,7 +189,7 @@ export default function SwipeCard({ decision, stats, onChoose }) {
             <strong>
               {side === 'left' ? `← ${decision.left.label}` : `${decision.right.label} →`}
             </strong>
-            <Effects choice={decision[side]} stats={stats} />
+            <Effects choice={decision[side]} stats={stats} card={decision} />
           </button>
         ))}
       </div>
