@@ -29,11 +29,15 @@ function planEvents(day, rng = Math.random) {
   return { week, days };
 }
 
-// Sleep & health: SLEEP_THRESHOLD hours of spare time or less means you're under-slept.
-export const SLEEP_THRESHOLD = 7;
+// Time: free hours each day, after sleep and chores. Jobs take hours on workdays
+// (Mon–Fri); each commitment takes its hours on one day of the week.
+export const FREE_HOURS_PER_DAY = 10;
+const WORKDAYS = [0, 1, 2, 3, 4];
+// A day with SLEEP_THRESHOLD free hours or fewer cuts into sleep: you're under-slept.
+export const SLEEP_THRESHOLD = 1;
 export const LOW_HEALTH = 50;            // below this: more medical events, worse job odds
-const HEALTH_LOSS_PER_WEEK = 2;          // while under-slept
-const HEALTH_GAIN_PER_WEEK = 5;          // while rested
+const HEALTH_LOSS_PER_WEEK = 2;          // per week of under-slept days
+const HEALTH_GAIN_PER_WEEK = 5;          // per week of rested, debt-free days
 const LOW_HEALTH_JOB_PENALTY = 0.15;     // subtracted from job application odds
 
 // Skill-based pay: jobs marked `skillPay` pay base × (PAY_BASE + PAY_PER_SKILL × skills).
@@ -61,7 +65,31 @@ export const hasJob = (s) => s.flows.some((f) => f.kind === 'job');
 const jobIncome = (s) => s.flows.filter((f) => f.kind === 'job').reduce((sum, f) => sum + f.amount, 0);
 export const hasFlag = (s, flag) => s.flags.includes(flag);
 export const hasCommitment = (s, id) => s.commitments.some((c) => c.id === id);
-export const isUnderSlept = (s) => s.spareTime <= SLEEP_THRESHOLD;
+// Hours a job takes on `day` (workdays only, once the job has started).
+const jobHoursOn = (s, day) =>
+  WORKDAYS.includes(dayOfWeek(day))
+    ? s.flows.filter((f) => f.kind === 'job' && day >= f.activeFrom).reduce((h, f) => h + (f.hours ?? 0), 0)
+    : 0;
+// Hours your commitments take on `day`.
+const commitmentHoursOn = (s, day) =>
+  s.commitments.filter((c) => c.weekdays.includes(dayOfWeek(day))).reduce((h, c) => h + c.hours, 0);
+// Free hours on `day`, minus any hours a card keeps you busy (`busy`).
+export const freeHours = (s, day = s.day, busy = 0) =>
+  FREE_HOURS_PER_DAY - jobHoursOn(s, day) - commitmentHoursOn(s, day) - busy;
+export const isUnderSlept = (s) => freeHours(s) <= SLEEP_THRESHOLD;
+
+// Which weekday a new commitment lands on: its own `weekday` if set, otherwise
+// a weeknight (Mon–Fri) — the least busy one, with ties spread out by the
+// commitment's id so they don't all pile onto Monday.
+export function commitmentDays(c, s) {
+  if (c.weekdays) return c.weekdays;
+  if (c.weekday != null) return [c.weekday];
+  const week = Math.floor((s.day - 1) / 7) * 7 + 1; // Monday of this week
+  const load = (wd) => FREE_HOURS_PER_DAY - freeHours(s, week + wd + 7);
+  const shift = [...c.id].reduce((h, ch) => h + ch.charCodeAt(0), 0) % 5;
+  const order = [0, 1, 2, 3, 4].map((i) => (i + shift) % 5);
+  return [order.reduce((best, wd) => (load(wd) < load(best) ? wd : best), order[0])];
+}
 export const isHomeowner = (s) => s.house != null;
 // Days since a flag was set or a commitment started (-1 if never).
 export const daysSince = (s, key) => (s.since[key] == null ? -1 : s.day - s.since[key]);
@@ -103,6 +131,7 @@ function makeFlow(def, startDay) {
       amount: def.amount, every: 'daily', startDay: due, endDay: due + 1, scheduled: true };
   }
   let start = startDay + (def.afterDays ?? 0);
+  const activeFrom = start;
   // Weekly flows with a weekday wait for the next one, e.g. payday on Friday.
   if (def.every === 'weekly' && def.weekday != null) start += (def.weekday - dayOfWeek(start) + 7) % 7;
   return {
@@ -115,6 +144,8 @@ function makeFlow(def, startDay) {
     amount: def.amount,                 // + income, - expense
     every: def.every,                   // 'daily' | 'weekly' | 'monthly'
     weekday: def.every === 'weekly' ? dayOfWeek(start) : null,
+    activeFrom,
+    hours: def.hours ?? null,           // jobs: hours per workday
     startDay: start,
     endDay: def.durationDays ? start + def.durationDays : null, // exclusive
   };
@@ -155,7 +186,6 @@ export function createInitialStats() {
     swipes: 0,          // choices made so far
     wealth: STARTING_DEBT,
     social: randomInt(1, 4),
-    spareTime: 24,
     health: 100,
     skills: randomInt(1, 4),
     character: makeCharacter(),
@@ -221,9 +251,11 @@ export const currentGoal = (s) => GOALS.find((g) => !s.goalsDone.includes(g.id))
 //   item:      add a collectible, { label, image, value }; it may gain value each month
 //   sell:      sell the collectible with this id (pair with an effects payment)
 //   pauseIncome: no job or income-stream payments for the turn (costs still apply)
-//   commit:    start an ongoing commitment (hobby, club, pet) that uses spare time every week:
+//   busy:      hours a day this card keeps you busy while it lasts (e.g. a week of study)
+//   commit:    start an ongoing commitment (hobby, club, pet) that takes hours one day a week:
 //              { id, label, image, hours, cost: { amount, every }, gains: [{ stat, amount, every,
 //                chance?, afterDays? }], keepPrompt?, dropLabel?, dropOutcome? }
+//              Lands on `weekday` (or `weekdays`) if set, else your freest day.
 //              Therapy sessions let you drop commitments to get the hours back.
 const SKIP = { label: 'Skip', outcome: 'You let this one pass.' };
 
@@ -253,12 +285,13 @@ export const DECISIONS = [
     days: 7,
     left: {
       label: 'Study',
-      effects: { skills: 1, spareTime: -2 },
+      effects: { skills: 1 },
+      busy: 3,
       outcome: 'A week of focused study. Your skills went up.',
     },
     right: {
       label: 'Rest',
-      effects: { spareTime: 1 },
+      effects: { health: 3 },
       outcome: 'You took the week easy.',
     },
   },
@@ -270,7 +303,8 @@ export const DECISIONS = [
     left: {
       label: 'Enroll',
       days: 14,
-      effects: { skills: 3, spareTime: -8 },
+      effects: { skills: 3 },
+      busy: 8,
       recurring: [{ label: 'Coding bootcamp', amount: -25, every: 'daily', durationDays: 14 }],
       setFlags: ['coding'],
       outcome: 'Two intense weeks of code. Developer jobs are now within reach.',
@@ -294,8 +328,7 @@ export const DECISIONS = [
       effects: { wealth: -5 },
       apply: {
         chance: (s) => clampChance(0.3 + 0.1 * s.skills),
-        job: { label: 'Supermarket job', amount: 150, every: 'weekly' },
-        effects: { spareTime: -10 },
+        job: { label: 'Supermarket job', amount: 150, every: 'weekly', hours: 5 },
         success: 'You got the supermarket job!',
         fail: 'Two weeks of waiting, then a rejection email.',
       },
@@ -314,8 +347,8 @@ export const DECISIONS = [
       effects: { wealth: -5 },
       apply: {
         chance: (s) => clampChance(0.2 + 0.1 * s.skills + 0.05 * s.social),
-        job: { label: 'Café job', amount: 120, every: 'weekly' },
-        effects: { spareTime: -8, social: 1 },
+        job: { label: 'Café job', amount: 120, every: 'weekly', hours: 4 },
+        effects: { social: 1 },
         success: 'The café hired you. Knowing people helped.',
         fail: 'They went with someone who had more experience.',
       },
@@ -334,8 +367,7 @@ export const DECISIONS = [
       effects: { wealth: -5 },
       apply: {
         chance: (s) => clampChance(0.5 + 0.1 * s.skills),
-        job: { label: 'Landscaping job', amount: 220, every: 'weekly', skillPay: true },
-        effects: { spareTime: -12 },
+        job: { label: 'Landscaping job', amount: 220, every: 'weekly', skillPay: true, hours: 7 },
         success: 'The chainsaw course paid off. You start Monday!',
         fail: 'The crew filled the spot before you heard back.',
       },
@@ -354,8 +386,7 @@ export const DECISIONS = [
       effects: { wealth: -5 },
       apply: {
         chance: (s) => clampChance(0.05 + 0.08 * s.skills),
-        job: { label: 'Junior developer', amount: 400, every: 'weekly', skillPay: true },
-        effects: { spareTime: -12 },
+        job: { label: 'Junior developer', amount: 400, every: 'weekly', skillPay: true, hours: 8 },
         success: 'You passed the technical interview. Welcome aboard!',
         fail: 'Three rounds of interviews, then a no. More skills would help.',
       },
@@ -375,7 +406,6 @@ export const DECISIONS = [
     },
     right: {
       label: 'No',
-      effects: { spareTime: 1 },
       outcome: 'You kept the evening free for yourself.',
     },
   },
@@ -396,7 +426,7 @@ export const DECISIONS = [
     },
     right: {
       label: 'Stream',
-      effects: { spareTime: 2 },
+      effects: { health: 2 },
       recurring: [{ label: 'Streaming service', amount: -15, every: 'monthly' }],
       outcome: 'You signed up for streaming and caught up on a few shows.',
     },
@@ -424,17 +454,18 @@ export const DECISIONS = [
     when: (s) => hasJob(s),
     left: {
       label: 'Take',
-      effects: { wealth: 60, spareTime: -4 },
+      effects: { wealth: 60 },
+      busy: 4,
       outcome: 'Long week, but an extra $60.',
     },
     right: {
       label: 'Pass',
-      effects: { spareTime: 2 },
+      effects: { health: 3 },
       outcome: 'You kept your evenings free.',
     },
   },
 
-  // --- Hobbies & commitments: cost spare time every week, pay off over time ---
+  // --- Hobbies & commitments: take a few hours one day a week, pay off over time ---
   {
     id: 'hobby-guitar',
     kicker: '🎨 Hobby',
@@ -460,7 +491,7 @@ export const DECISIONS = [
     left: {
       label: 'Join',
       commit: {
-        id: 'soccer', label: 'Sunday soccer', image: '⚽', hours: 2,
+        id: 'soccer', label: 'Sunday soccer', image: '⚽', hours: 2, weekday: 6,
         gains: [
           { stat: 'social', amount: 1, every: 'monthly' },
           { stat: 'health', amount: 5, every: 'monthly' },
@@ -479,7 +510,7 @@ export const DECISIONS = [
     left: {
       label: 'Bake',
       commit: {
-        id: 'baking', label: 'Market baking', image: '🥖', hours: 5,
+        id: 'baking', label: 'Market baking', image: '🥖', hours: 5, weekday: SAT,
         cost: { amount: -10, every: 'weekly' },
         gains: [{ stat: 'wealth', amount: 35, every: 'weekly', weekday: SAT, kind: 'income' }],
         keepPrompt: 'Keep baking for the market?',
@@ -621,7 +652,7 @@ export const DECISIONS = [
     left: {
       label: 'Join',
       commit: {
-        id: 'tcg', label: 'Card game', image: '🃏', hours: 3,
+        id: 'tcg', label: 'Card game', image: '🃏', hours: 3, weekday: 3,
         cost: { amount: -40, every: 'monthly' },
         gains: [{ stat: 'social', amount: 1, every: 'monthly' }],
         keepPrompt: 'Keep playing the card game?',
@@ -724,7 +755,7 @@ export const DECISIONS = [
     left: {
       label: 'Take it',
       commit: {
-        id: 'residency', label: 'DJ residency', image: '🍸', hours: 4,
+        id: 'residency', label: 'DJ residency', image: '🍸', hours: 4, weekday: SAT,
         gains: [{ stat: 'wealth', amount: 150, every: 'weekly', weekday: SAT, kind: 'income' }],
         keepPrompt: 'Keep your Saturday DJ residency?',
       },
@@ -872,7 +903,7 @@ export const DECISIONS = [
     id: 'bike-repair',
     kicker: '🗺️ Side quest',
     image: '🔧',
-    prompt: 'Buy $150 of tools and learn to fix bikes in your spare time?',
+    prompt: 'Buy $150 of tools and learn to fix bikes in your free time?',
     when: (s) => s.wealth >= 150,
     left: {
       label: 'Learn',
@@ -911,7 +942,7 @@ export const DECISIONS = [
     left: {
       label: 'Open it',
       commit: {
-        id: 'bike-stand', label: 'Repair stand', image: '🛠️', hours: 4,
+        id: 'bike-stand', label: 'Repair stand', image: '🛠️', hours: 4, weekday: SAT,
         gains: [{ stat: 'wealth', amount: 90, every: 'weekly', weekday: SAT, kind: 'income' }],
         keepPrompt: 'Keep running your weekend repair stand?',
       },
@@ -955,8 +986,7 @@ export function reassessCard(c) {
     left: {
       label: c.dropLabel ?? 'Drop',
       drop: c.id,
-      effects: { spareTime: c.hours },
-      outcome: c.dropOutcome ?? `You let go of ${c.label.toLowerCase()} and got ${c.hours}h of spare time back.`,
+      outcome: c.dropOutcome ?? `You let go of ${c.label.toLowerCase()} and got ${c.hours}h back every ${c.weekdays.map((d) => WEEKDAYS[d]).join(', ')}.`,
     },
     right: { label: 'Keep', outcome: `${c.label} stays.` },
   };
@@ -1027,7 +1057,7 @@ export const EVENTS = [
     },
     right: {
       label: 'Ignore it',
-      effects: { spareTime: -3 },
+      effects: { health: -5 },
       recurring: [{ label: 'Painkillers', amount: -5, every: 'weekly', durationDays: 56 }],
       outcome: 'Painkillers for now. It is hard to relax.',
     },
@@ -1046,7 +1076,8 @@ export const EVENTS = [
     },
     right: {
       label: 'Move out',
-      effects: { wealth: -150, spareTime: -4 },
+      effects: { wealth: -150 },
+      busy: 8,
       outcome: 'Moving cost $150 and a weekend, but your rent stays the same.',
     },
   },
@@ -1076,10 +1107,12 @@ export const EVENTS = [
     left: {
       label: 'Pay it',
       effects: { wealth: -30 },
-      outcome: 'Paid. Lesson learned about street cleaning day.',
+      busy: 1,
+      outcome: 'An hour on hold with the city, but paid. Lesson learned about street cleaning day.',
     },
     right: {
       label: 'Contest it',
+      busy: 4,
       check: {
         chance: () => 0.4,
         success: { outcome: 'The sign was hidden behind a tree. Ticket dismissed.' },
@@ -1088,6 +1121,76 @@ export const EVENTS = [
           outcome: 'Contest denied, with a $15 admin fee on top.',
         },
       },
+    },
+  },
+  // --- Errands: small costs that mostly eat into today's free time ---
+  {
+    id: 'dmv-errand',
+    image: '🪪',
+    prompt: 'Your ID expires this week. Spend the afternoon in line at the DMV?',
+    left: {
+      label: 'Go today',
+      busy: 4,
+      effects: { wealth: -25 },
+      outcome: 'Four hours, one terrible photo and a $25 fee. Done.',
+    },
+    right: {
+      label: 'Put it off',
+      recurring: [{ label: 'Late ID renewal', amount: -60, inDays: 14 }],
+      outcome: 'You will go later. A $35 late fee is coming on top of the $25.',
+    },
+  },
+  {
+    id: 'airport-ride',
+    image: '✈️',
+    prompt: 'A friend needs a ride to the airport, plus help with their bags.',
+    left: {
+      label: 'Drive them',
+      busy: 3,
+      effects: { social: 1 },
+      outcome: 'Traffic both ways, but they owe you one.',
+    },
+    right: {
+      label: 'Can\'t today',
+      effects: { social: -1 },
+      outcome: 'They took a pricey cab and mentioned it twice.',
+    },
+  },
+  {
+    id: 'internet-down',
+    image: '📡',
+    prompt: 'Your internet is down. The technician\'s window is 8 a.m. to 4 p.m.',
+    left: {
+      label: 'Wait for them',
+      busy: 6,
+      outcome: 'They showed up at 3:55. Fixed, but your day is gone.',
+    },
+    right: {
+      label: 'Fix it yourself',
+      busy: 2,
+      check: {
+        stat: 'skills',
+        chance: (s) => clampChance(0.3 + 0.07 * s.skills),
+        success: { effects: { skills: 1 }, outcome: 'You reset the router config yourself. +1 skill.' },
+        fail: { effects: { wealth: -40 }, outcome: 'Two hours in, you gave up and paid $40 for a same-day visit.' },
+      },
+    },
+  },
+  {
+    id: 'jury-duty',
+    weight: () => 0.3,
+    image: '⚖️',
+    prompt: 'You have been called for jury duty. It pays $40 a day.',
+    left: {
+      label: 'Serve',
+      days: 2,
+      busy: 8,
+      effects: { wealth: 80, social: 1 },
+      outcome: 'Two long days in court. Civic duty done, and $80 for your trouble.',
+    },
+    right: {
+      label: 'Postpone',
+      outcome: 'Rescheduled. They will call again.',
     },
   },
   {
@@ -1188,8 +1291,7 @@ export const EVENTS = [
         success: [
           {
             when: (s) => !hasJob(s),
-            job: { label: 'Job from a party contact', amount: 180, every: 'weekly' },
-            effects: { spareTime: -10 },
+            job: { label: 'Job from a party contact', amount: 180, every: 'weekly', hours: 6 },
             outcome: 'You hit it off with a manager who is hiring. You start next week!',
           },
           {
@@ -1246,7 +1348,7 @@ export const EVENTS = [
         ],
         keepPrompt: 'Find your cat a loving new home?',
         dropLabel: 'Rehome',
-        dropOutcome: 'A friend gave your cat a loving new home. You got 2h of spare time back.',
+        dropOutcome: 'A friend gave your cat a loving new home. You got your time back.',
       },
       outcome: 'A $40 vet checkup, and now you have a roommate who purrs.',
     },
@@ -1265,8 +1367,7 @@ export const EVENTS = [
         success: [
           {
             when: (s) => !hasJob(s),
-            job: { label: 'Job from the mixer', amount: 200, every: 'weekly', skillPay: true },
-            effects: { spareTime: -10 },
+            job: { label: 'Job from the mixer', amount: 200, every: 'weekly', skillPay: true, hours: 7 },
             outcome: 'A founder liked your pitch and offered you a job. Pay depends on your skills.',
           },
           {
@@ -1282,9 +1383,10 @@ export const EVENTS = [
   {
     id: 'help-move',
     image: '📦',
-    prompt: 'Your neighbor asks for help moving on Saturday.',
+    prompt: 'Your neighbor asks for help moving today.',
     left: {
       label: 'Help',
+      busy: 6,
       check: {
         chance: () => 0.5,
         success: {
@@ -1562,7 +1664,7 @@ export const EVENTS = [
     left: {
       label: 'Play',
       commit: {
-        id: 'gigs', label: 'Weekend gigs', image: '🎤', hours: 3,
+        id: 'gigs', label: 'Weekend gigs', image: '🎤', hours: 3, weekday: SAT,
         gains: [
           { stat: 'wealth', amount: 50, every: 'weekly', weekday: SAT, kind: 'income' },
           { stat: 'social', amount: 1, every: 'monthly' },
@@ -1582,7 +1684,7 @@ export const EVENTS = [
     left: {
       label: 'Start',
       commit: {
-        id: 'dogs', label: 'Dog walking', image: '🐕', hours: 4,
+        id: 'dogs', label: 'Dog walking', image: '🐕', hours: 1, weekdays: [0, 1, 2, 3, 4],
         gains: [
           { stat: 'wealth', amount: 60, every: 'weekly', kind: 'income' },
           { stat: 'health', amount: 5, every: 'monthly' },
@@ -1963,7 +2065,6 @@ export const STAT_META = {
   social: { label: 'Social', format: (v) => `${v}` },
   skills: { label: 'Skills', format: (v) => `${v}` },
   health: { label: 'Health', format: (v) => `${Math.round(v)}` },
-  spareTime: { label: 'Spare time', format: (v) => `${v}h` },
 };
 
 export function money(v) {
@@ -1991,7 +2092,6 @@ export function formatDelta(key, delta) {
   const sign = delta > 0 ? '+' : '-';
   const abs = Math.abs(delta);
   if (key === 'wealth') return `${sign}$${abs.toLocaleString('en-US')}`;
-  if (key === 'spareTime') return `${sign}${abs}h`;
   return `${sign}${abs}`;
 }
 
@@ -2022,10 +2122,9 @@ function startCommitment(next, c) {
   if (next.commitments.some((x) => x.id === c.id)) return;
   next.since[c.id] = next.day;
   next.commitments.push({
-    id: c.id, label: c.label, image: c.image, hours: c.hours,
+    id: c.id, label: c.label, image: c.image, hours: c.hours, weekdays: commitmentDays(c, next),
     keepPrompt: c.keepPrompt, dropLabel: c.dropLabel, dropOutcome: c.dropOutcome,
   });
-  next.spareTime -= c.hours;
   if (c.cost) next.flows.push(makeFlow({ label: c.label, ...c.cost, commitmentId: c.id }, next.day));
   for (const g of c.gains ?? []) {
     // Gains start after one period by default (no +1 social on the day you join).
@@ -2120,6 +2219,10 @@ export function applyChoice(stats, card, side, rng = Math.random) {
     outcome = `${passed ? '✅' : '❌'} ${label} ${passed ? 'passed' : 'failed'}. ${result?.outcome ?? ''}`;
   }
 
+  next.health = Math.max(0, Math.min(100, next.health));
+  const healthBefore = next.health;
+  const healthCauses = new Set();
+  const busy = choice.busy ?? 0;
   for (let d = next.day; d < next.day + days; d++) {
     // Collectibles: each month held, value moves -5%…+15% (usually up).
     next.items = next.items.map((it) =>
@@ -2139,6 +2242,15 @@ export function applyChoice(stats, card, side, rng = Math.random) {
         gains[flow.label][flow.stat] = (gains[flow.label][flow.stat] ?? 0) + flow.amount;
       }
     }
+
+    // Health, day by day: an overbooked day (too few free hours) and a day in
+    // debt each drain health; a rested, debt-free day recovers it.
+    let rate = 0;
+    if (freeHours(next, d, busy) <= SLEEP_THRESHOLD) { rate -= HEALTH_LOSS_PER_WEEK; healthCauses.add('😴 Under-slept'); }
+    if (next.wealth < 0) { rate -= DEBT_HEALTH_LOSS_PER_WEEK; healthCauses.add('💳 In debt'); }
+    if (rate === 0) rate = HEALTH_GAIN_PER_WEEK;
+    // Kept fractional so small daily drains add up; shown rounded.
+    next.health = Math.max(0, Math.min(100, +(next.health + rate / 7).toFixed(3)));
   }
   if (card.event) {
     const due = next.eventPlan.days.filter((d) => d <= stats.day);
@@ -2148,23 +2260,11 @@ export function applyChoice(stats, card, side, rng = Math.random) {
   next.day += days;
   if (weekOf(next.day) !== next.eventPlan.week) next.eventPlan = planEvents(next.day, rng);
   next.flows = next.flows.filter((f) => f.endDay === null || f.endDay > next.day);
-  next.spareTime = Math.max(0, next.spareTime);
   next.social = Math.max(0, next.social);
   next.skills = Math.max(0, next.skills);
   if (card.therapy) next.nextTherapy = next.day + THERAPY_EVERY;
 
-  // Health: drains while under-slept and while in debt; recovers only when
-  // you're rested and debt free.
-  const weeks = days / 7;
   next.health = Math.max(0, Math.min(100, next.health));
-  const healthBefore = next.health;
-  const healthCauses = [];
-  let rate = 0;
-  if (isUnderSlept(next)) { rate -= HEALTH_LOSS_PER_WEEK; healthCauses.push('😴 Under-slept'); }
-  if (next.wealth < 0) { rate -= DEBT_HEALTH_LOSS_PER_WEEK; healthCauses.push('💳 In debt'); }
-  if (rate === 0) rate = HEALTH_GAIN_PER_WEEK;
-  // Kept fractional so a daily -2/wk drain adds up; shown rounded.
-  next.health = Math.max(0, Math.min(100, +(next.health + rate * weeks).toFixed(3)));
   const healthDelta = Math.round(next.health) - Math.round(healthBefore);
 
   const newGoals = GOALS.filter((g) => !next.goalsDone.includes(g.id) && g.isDone(next));
@@ -2173,5 +2273,5 @@ export function applyChoice(stats, card, side, rng = Math.random) {
   // The only way to lose: health hits 0 (from debt, lack of sleep, or both).
   const gameOver = next.health < 0.5 ? 'health' : null;
 
-  return { stats: next, ledger, gains, outcome, newGoals, healthDelta, healthCauses, gameOver };
+  return { stats: next, ledger, gains, outcome, newGoals, healthDelta, healthCauses: [...healthCauses], gameOver };
 }

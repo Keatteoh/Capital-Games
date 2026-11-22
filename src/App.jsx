@@ -15,6 +15,8 @@ import {
   WEEKDAYS,
   dayOfWeek,
   isUnderSlept,
+  freeHours,
+  FREE_HOURS_PER_DAY,
   createInitialStats,
   currentGoal,
   drawCard,
@@ -190,7 +192,7 @@ function newGame() {
   // outcome toast showing) for layout testing.
   if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('stress')) {
     game.status = 'playing';
-    Object.assign(stats, { wealth: -19, spareTime: 4, health: 40, day: 8 });
+    Object.assign(stats, { wealth: -19, health: 40, day: 8 });
     game.last = {
       outcome: 'You joined the gym and recognise a few regulars already.',
       ledger: { 'Allowance from parents': 3, 'Cost of living': -20, 'Gym membership': -20 },
@@ -203,7 +205,7 @@ function newGame() {
   const forced = import.meta.env.DEV && new URLSearchParams(window.location.search).get('card');
   if (forced) game.status = 'playing';
   if (forced === 'house') game.card = houseCard(makeHouse());
-  else if (forced === 'reassess') game.card = reassessCard({ id: 'guitar', label: 'Guitar', image: '🎸', hours: 3, keepPrompt: 'Keep up the guitar lessons?' });
+  else if (forced === 'reassess') game.card = reassessCard({ id: 'guitar', label: 'Guitar', image: '🎸', hours: 3, weekdays: [1], keepPrompt: 'Keep up the guitar lessons?' });
   else if (forced) game.card = [...DECISIONS, ...EVENTS].find((c) => c.id === forced) ?? game.card;
   return game;
 }
@@ -307,7 +309,7 @@ export default function App() {
                   {stats.commitments.map((c) => (
                     <li key={c.id}>
                       <span>{c.image} {c.label}</span>
-                      <span className="neg">-{c.hours}h spare</span>
+                      <span className="neg">{c.hours}h {c.weekdays.map((d) => WEEKDAYS[d]).join(', ')}</span>
                     </li>
                   ))}
                 </ul>
@@ -388,10 +390,10 @@ export default function App() {
           tone={lowHealth ? 'bad' : underSlept ? 'warn' : null}
         />
         <Meter
-          label="Spare"
-          value={stats.spareTime}
-          display={STAT_META.spareTime.format(stats.spareTime)}
-          max={24}
+          label="Time"
+          value={Math.max(0, freeHours(stats))}
+          display={`${Math.max(0, freeHours(stats))}h`}
+          max={FREE_HOURS_PER_DAY}
           tone={underSlept ? 'bad' : null}
         />
       </footer>

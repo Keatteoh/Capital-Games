@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { STAT_META, money, WEEKDAYS, PAYDAY, dayOfWeek, formatDelta, formatFlow, jobChance, jobPay, choiceChance, resolve } from '../decisions.js';
+import { STAT_META, money, commitmentDays, WEEKDAYS, PAYDAY, dayOfWeek, formatDelta, formatFlow, jobChance, jobPay, choiceChance, resolve } from '../decisions.js';
 
 const SWIPE_THRESHOLD = 90; // px of drag needed to commit a choice
 const DRAG_START = 8;       // px of movement before a touch counts as a drag (vs a tap)
@@ -18,6 +18,7 @@ function Effects({ choice, stats }) {
           🎲 {pct(jobChance(apply, stats))} → {formatFlow({ weekday: PAYDAY, ...apply.job, amount: jobPay(apply.job, stats) })}
         </li>
       )}
+      {apply?.job.hours && <li>🕘 {apply.job.hours}h a day, Mon–Fri</li>}
       {apply?.job.skillPay && <li>💪 Pay scales with skills</li>}
       {check && (
         <li className="pos">
@@ -25,6 +26,9 @@ function Effects({ choice, stats }) {
         </li>
       )}
       {choice.days && <li>⏳ {choice.days} days</li>}
+      {choice.busy && (
+        <li className="neg">🕘 {choice.busy}h {(choice.days ?? 1) > 1 ? 'a day while it lasts' : 'of today'}</li>
+      )}
       {choice.pauseIncome && <li className="neg">⏸️ No income for 1 week</li>}
       {pay && (
         <li className="pos">
@@ -44,7 +48,9 @@ function Effects({ choice, stats }) {
       ))}
       {commit && (
         <>
-          <li className="neg">🗓️ {formatDelta('spareTime', -commit.hours)} spare time, ongoing</li>
+          <li className="neg">
+            🗓️ {commit.hours}h every {commitmentDays(commit, stats).map((d) => WEEKDAYS[d]).join(', ')}
+          </li>
           {commit.cost && <li className="neg">{formatFlow(commit.cost)}</li>}
           {(commit.gains ?? []).map((g) => (
             <li key={`${g.stat}-${g.every}`} className="pos">
