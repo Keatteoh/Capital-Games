@@ -767,6 +767,158 @@ export const DECISIONS = [
     },
     right: { label: 'Pass', outcome: 'You were too busy this time.' },
   },
+
+  // Gardening → farmers market produce → restaurant herb deliveries stream; rare bonsai contest
+  {
+    id: 'garden-plot',
+    kicker: '🗺️ Side quest',
+    image: '🌱',
+    prompt: 'A community garden has a plot open for $15 a month. Start growing?',
+    left: {
+      label: 'Plant',
+      commit: {
+        id: 'garden', label: 'Garden plot', image: '🌱', hours: 3,
+        cost: { amount: -15, every: 'monthly' },
+        gains: [{ stat: 'health', amount: 5, every: 'monthly' }],
+        keepPrompt: 'Keep tending your garden plot?',
+      },
+      outcome: 'Dirt under your nails and seedlings in the ground. You feel calmer already.',
+    },
+    right: SKIP,
+  },
+  {
+    id: 'garden-market',
+    repeatable: true,
+    kicker: '🌱 Garden',
+    image: '🥕',
+    prompt: 'Your plot is overflowing. Sell produce at the Saturday farmers market?',
+    when: (s) => hasCommitment(s, 'garden') && daysSince(s, 'garden') >= 30,
+    left: {
+      label: 'Sell',
+      pay: { min: 60, max: 140 },
+      effects: { social: 1 },
+      outcome: 'Your heirloom tomatoes sold out first.',
+    },
+    right: { label: 'Eat it all', outcome: 'You ate very well this week.' },
+  },
+  {
+    id: 'herb-delivery',
+    kicker: '💼 Opportunity',
+    image: '🌿',
+    prompt: 'A restaurant chef wants fresh herbs from your plot every week for $50. Deal?',
+    when: (s) => hasCommitment(s, 'garden') && daysSince(s, 'garden') >= 45 && !hasCommitment(s, 'herbs'),
+    left: {
+      label: 'Deal',
+      commit: {
+        id: 'herbs', label: 'Herb deliveries', image: '🌿', hours: 2,
+        gains: [{ stat: 'wealth', amount: 50, every: 'weekly', kind: 'income' }],
+        keepPrompt: 'Keep delivering herbs to the restaurant?',
+      },
+      outcome: 'Your basil is on the menu. +$50/wk.',
+    },
+    right: { label: 'Not now', outcome: 'You are growing for yourself for now.' },
+  },
+
+  // Photography → event shoots → better lenses; rare magazine sale or limited print
+  {
+    id: 'photo-hobby',
+    kicker: '🗺️ Side quest',
+    image: '📷',
+    prompt: 'Buy a used camera for $300 and start taking photography seriously?',
+    when: (s) => s.wealth >= 300,
+    left: {
+      label: 'Buy it',
+      effects: { wealth: -300 },
+      commit: {
+        id: 'photo', label: 'Photography', image: '📷', hours: 2,
+        gains: [{ stat: 'skills', amount: 1, every: 'monthly', afterDays: 30 }],
+        keepPrompt: 'Keep up your photography?',
+      },
+      outcome: 'Golden hour walks, every evening. Your photos get better each week.',
+    },
+    right: SKIP,
+  },
+  {
+    id: 'photo-gig',
+    repeatable: true,
+    kicker: '📷 Photography',
+    image: '📸',
+    prompt: 'Someone needs photos of their event or family portraits. Book the shoot?',
+    when: (s) => hasCommitment(s, 'photo') && daysSince(s, 'photo') >= 21,
+    left: {
+      label: 'Shoot it',
+      pay: (s) => (hasFlag(s, 'lens') ? { min: 220, max: 400 } : { min: 120, max: 250 }),
+      outcome: 'They loved the photos and tagged you everywhere.',
+    },
+    right: { label: 'Pass', outcome: 'You were not free that day.' },
+  },
+  {
+    id: 'photo-lens',
+    kicker: '📷 Photography',
+    image: '🔭',
+    prompt: 'Buy a pro lens for $900? Sharper photos mean higher rates.',
+    when: (s) => hasCommitment(s, 'photo') && daysSince(s, 'photo') >= 30 && s.wealth >= 900,
+    left: {
+      label: 'Buy it',
+      effects: { wealth: -900, skills: 1 },
+      setFlags: ['lens'],
+      outcome: 'Creamy backgrounds, crisp faces. Shoots now pay $220–$400.',
+    },
+    right: { label: 'Not yet', outcome: 'The kit lens will do for now.' },
+  },
+
+  // Bike repair → flipping thrifted bikes → weekend repair stand stream; rare vintage frame
+  {
+    id: 'bike-repair',
+    kicker: '🗺️ Side quest',
+    image: '🔧',
+    prompt: 'Buy $150 of tools and learn to fix bikes in your spare time?',
+    when: (s) => s.wealth >= 150,
+    left: {
+      label: 'Learn',
+      effects: { wealth: -150 },
+      commit: {
+        id: 'bikes', label: 'Bike repair', image: '🔧', hours: 3,
+        gains: [{ stat: 'skills', amount: 1, every: 'monthly', afterDays: 30 }],
+        keepPrompt: 'Keep fixing bikes?',
+      },
+      outcome: 'Greasy hands and a wall of tools. Neighbors are already asking for tune-ups.',
+    },
+    right: SKIP,
+  },
+  {
+    id: 'bike-flip',
+    repeatable: true,
+    kicker: '🔧 Bike repair',
+    image: '🚲',
+    prompt: 'A thrift store has a beat-up bike for $60. Fix it up and flip it?',
+    when: (s) => hasCommitment(s, 'bikes') && daysSince(s, 'bikes') >= 21 && s.wealth >= 60,
+    left: {
+      label: 'Flip it',
+      days: 2,
+      effects: { wealth: -60 },
+      pay: { min: 140, max: 260 },
+      outcome: 'New tires, true wheels, fresh chain. Sold to the first person who test-rode it.',
+    },
+    right: { label: 'Pass', outcome: 'Not worth the trouble.' },
+  },
+  {
+    id: 'bike-stand',
+    kicker: '💼 Opportunity',
+    image: '🛠️',
+    prompt: 'Open a weekend bike repair stand at the park? About $90 a week.',
+    when: (s) => hasCommitment(s, 'bikes') && daysSince(s, 'bikes') >= 45 && s.skills >= 5 && !hasCommitment(s, 'bike-stand'),
+    left: {
+      label: 'Open it',
+      commit: {
+        id: 'bike-stand', label: 'Repair stand', image: '🛠️', hours: 4,
+        gains: [{ stat: 'wealth', amount: 90, every: 'weekly', weekday: SAT, kind: 'income' }],
+        keepPrompt: 'Keep running your weekend repair stand?',
+      },
+      outcome: 'A line of flat tires every Saturday. +$90/wk.',
+    },
+    right: { label: 'Not yet', outcome: 'You will keep it a hobby for now.' },
+  },
 ];
 
 // Monthly therapy session: drawn automatically when it's due.
@@ -1577,6 +1729,53 @@ export const EVENTS = [
         },
         right: { label: 'Too risky', outcome: 'You wished them luck.' },
       };
+    },
+  },
+  {
+    id: 'bonsai-contest',
+    weight: () => 0.4,
+    kicker: '🌱 Garden',
+    image: '🌳',
+    prompt: 'The botanical garden is holding a bonsai contest. Enter the juniper you have been shaping?',
+    when: (s) => hasCommitment(s, 'garden') && daysSince(s, 'garden') >= 60,
+    left: {
+      label: 'Enter',
+      effects: { wealth: -20 },
+      check: {
+        stat: 'skills',
+        chance: (s) => clampChance(0.15 + 0.05 * s.skills + Math.min(0.15, daysSince(s, 'garden') / 800)),
+        success: { pay: { min: 400, max: 600 }, effects: { social: 1 }, outcome: 'Best in show! The judges loved its windswept shape.' },
+        fail: { effects: { social: 1 }, outcome: 'An honorable mention, and a few new gardening friends.' },
+      },
+    },
+    right: { label: 'Not ready', outcome: 'Bonsai takes patience. Maybe next year.' },
+  },
+  {
+    id: 'magazine-photo',
+    weight: () => 0.4,
+    kicker: '📷 Photography',
+    image: '🖼️',
+    prompt: 'A magazine wants to buy one of your photos for $400.',
+    when: (s) => hasCommitment(s, 'photo') && daysSince(s, 'photo') >= 30,
+    left: { label: 'Sell', effects: { wealth: 400, social: 1 }, outcome: 'Your photo is in print, with your name under it.' },
+    right: {
+      label: 'Keep it',
+      item: { label: 'Limited print', image: '🖼️', value: 400 },
+      outcome: 'You made a signed, limited run instead. Prints like this can gain value.',
+    },
+  },
+  {
+    id: 'vintage-frame',
+    weight: () => 0.4,
+    kicker: '🔧 Bike repair',
+    image: '🚴',
+    prompt: 'Buried in a garage sale pile: a rare vintage racing frame worth about $450.',
+    when: (s) => hasCommitment(s, 'bikes') && daysSince(s, 'bikes') >= 21,
+    left: { label: 'Sell', effects: { wealth: 450 }, outcome: 'A collector drove two hours to buy it.' },
+    right: {
+      label: 'Keep it',
+      item: { label: 'Vintage frame', image: '🚴', value: 450 },
+      outcome: 'It is hanging on your wall. Vintage frames tend to climb in value.',
     },
   },
   {
