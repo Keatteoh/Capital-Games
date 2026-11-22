@@ -3,10 +3,16 @@ const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + mi
 // ---------- Tuning ----------
 export const PERIOD_DAYS = { daily: 1, weekly: 7, monthly: 30 };
 const PERIOD_SHORT = { daily: 'day', weekly: 'wk', monthly: 'mo' };
-export const DEFAULT_DAYS_PER_TURN = 7;
+export const DEFAULT_DAYS_PER_TURN = 1; // each swipe is one day unless a card says otherwise
+
+// Day 1 is a Monday. Weekly flows can land on a set weekday (0 = Mon … 6 = Sun).
+export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+export const dayOfWeek = (day) => (day - 1) % 7;
+const MON = 0, WED = 2, FRI = 4, SAT = 5;
+export const PAYDAY = FRI;
 export const STARTING_DEBT = -400;       // you start the game owing this much
 export const DEBT_HEALTH_LOSS_PER_WEEK = 2; // health lost each week you're in debt
-const COST_OF_LIVING = { label: 'Cost of living', amount: -20, every: 'weekly' };
+const COST_OF_LIVING = { label: 'Cost of living', amount: -20, every: 'weekly', weekday: MON };
 export const EVENT_CHANCE = 0.25; // chance each turn that a surprise event interrupts the deck
 
 // Sleep & health: SLEEP_THRESHOLD hours of spare time or less means you're under-slept.
@@ -79,7 +85,9 @@ function makeFlow(def, startDay) {
     return { id: ++flowId, label: def.label, kind: null, stat: 'wealth', chance: null, commitmentId: null,
       amount: def.amount, every: 'daily', startDay: due, endDay: due + 1, scheduled: true };
   }
-  const start = startDay + (def.afterDays ?? 0);
+  let start = startDay + (def.afterDays ?? 0);
+  // Weekly flows with a weekday wait for the next one, e.g. payday on Friday.
+  if (def.every === 'weekly' && def.weekday != null) start += (def.weekday - dayOfWeek(start) + 7) % 7;
   return {
     id: ++flowId,
     label: def.label,
@@ -89,6 +97,7 @@ function makeFlow(def, startDay) {
     commitmentId: def.commitmentId ?? null, // removed when that commitment is dropped
     amount: def.amount,                 // + income, - expense
     every: def.every,                   // 'daily' | 'weekly' | 'monthly'
+    weekday: def.every === 'weekly' ? dayOfWeek(start) : null,
     startDay: start,
     endDay: def.durationDays ? start + def.durationDays : null, // exclusive
   };
@@ -122,7 +131,7 @@ export function createInitialStats() {
   const allowance = randomInt(0, 15);
   const flows = [makeFlow(COST_OF_LIVING, 1)];
   if (allowance > 0) {
-    flows.unshift(makeFlow({ label: 'Allowance from parents', amount: allowance, every: 'weekly' }, 1));
+    flows.unshift(makeFlow({ label: 'Allowance from parents', amount: allowance, every: 'weekly', weekday: WED }, 1));
   }
   return {
     day: 1,
@@ -176,7 +185,7 @@ export const currentGoal = (s) => GOALS.find((g) => !s.goalsDone.includes(g.id))
 // Card fields:
 //   repeatable: can show up more than once (default: one-off)
 //   when(stats): only drawn when this returns true
-//   days: how many days the turn takes (default 7); a choice can override with its own `days`
+//   days: how many days the turn takes (default 1); a choice can override with its own `days`
 //   kicker: label in the card's top-left corner (default: Decision / Job offer / Surprise!)
 // Choice fields:
 //   effects:   one-time changes, e.g. { wealth: -100, skills: 1 }, or a function of stats
@@ -217,6 +226,7 @@ export const DECISIONS = [
     repeatable: true,
     image: '📚',
     prompt: 'Spend this week studying with free online courses?',
+    days: 7,
     left: {
       label: 'Study',
       effects: { skills: 1, spareTime: -2 },
@@ -386,6 +396,7 @@ export const DECISIONS = [
     repeatable: true,
     image: '⏰',
     prompt: 'Your manager offers extra shifts this week. Take them?',
+    days: 7,
     when: (s) => hasJob(s),
     left: {
       label: 'Take',
@@ -446,7 +457,7 @@ export const DECISIONS = [
       commit: {
         id: 'baking', label: 'Market baking', image: '🥖', hours: 5,
         cost: { amount: -10, every: 'weekly' },
-        gains: [{ stat: 'wealth', amount: 35, every: 'weekly', kind: 'income' }],
+        gains: [{ stat: 'wealth', amount: 35, every: 'weekly', weekday: SAT, kind: 'income' }],
         keepPrompt: 'Keep baking for the market?',
       },
       outcome: 'Your first loaves sold out by 10 a.m.',
@@ -717,6 +728,7 @@ export const EVENTS = [
     prompt: 'A week-long wellness retreat has an open spot for $50. Unplug and recharge?',
     left: {
       label: 'Go',
+      days: 7,
       effects: { wealth: -50, health: 25 },
       pauseIncome: true,
       outcome: 'A week of hikes, naps and no phone. You came back recharged, but missed a week of pay.',
@@ -1129,7 +1141,7 @@ export const EVENTS = [
       commit: {
         id: 'gigs', label: 'Weekend gigs', image: '🎤', hours: 3,
         gains: [
-          { stat: 'wealth', amount: 50, every: 'weekly', kind: 'income' },
+          { stat: 'wealth', amount: 50, every: 'weekly', weekday: SAT, kind: 'income' },
           { stat: 'social', amount: 1, every: 'monthly' },
         ],
         keepPrompt: 'Keep playing weekend gigs?',
@@ -1378,7 +1390,7 @@ export const STAT_META = {
   wealth: { label: 'Wealth', format: (v) => money(v) },
   social: { label: 'Social', format: (v) => `${v}` },
   skills: { label: 'Skills', format: (v) => `${v}` },
-  health: { label: 'Health', format: (v) => `${v}` },
+  health: { label: 'Health', format: (v) => `${Math.round(v)}` },
   spareTime: { label: 'Spare time', format: (v) => `${v}h` },
 };
 
@@ -1397,7 +1409,8 @@ export function formatFlow(flow) {
   const odds = flow.chance != null ? `${Math.round(flow.chance * 100)}%: ` : '';
   if (flow.inDays != null) return `${amount} due in ${flow.inDays} days`;
   if (flow.scheduled) return amount;
-  const base = `${odds}${amount}/${PERIOD_SHORT[flow.every]}`;
+  const on = flow.weekday != null ? ` ${WEEKDAYS[flow.weekday]}` : '';
+  const base = `${odds}${amount}/${PERIOD_SHORT[flow.every]}${on}`;
   if (!flow.durationDays) return base;
   return `${base} for ${flow.durationDays / PERIOD_DAYS[flow.every]} ${PERIOD_PLURAL[flow.every]}`;
 }
@@ -1462,7 +1475,8 @@ function applyResult(next, result, before, ledger) {
   for (const def of result.recurring ?? []) next.flows.push(makeFlow(def, next.day));
   for (const flag of result.setFlags ?? []) if (!next.flags.includes(flag)) next.flags.push(flag);
   if (result.job) {
-    next.flows.push(makeFlow({ ...result.job, amount: jobPay(result.job, before), kind: 'job' }, next.day));
+    const job = { weekday: PAYDAY, ...result.job, amount: jobPay(result.job, before), kind: 'job' };
+    next.flows.push(makeFlow(job, next.day + (result.startsIn ?? 0)));
   }
   if (result.raise) {
     next.flows = next.flows.map((f) =>
@@ -1501,9 +1515,13 @@ export function applyChoice(stats, card, side, rng = Math.random) {
 
   applyResult(next, choice, stats, ledger);
 
+  const days = choice.days ?? card.days ?? DEFAULT_DAYS_PER_TURN;
+
   if (choice.apply) {
     const hired = rng() < jobChance(choice.apply, stats);
-    if (hired) applyResult(next, { job: choice.apply.job, effects: choice.apply.effects }, stats, ledger);
+    // The job starts once the application wait is over, so no pay during it.
+    const job = { job: choice.apply.job, effects: choice.apply.effects, startsIn: days };
+    if (hired) applyResult(next, job, stats, ledger);
     outcome = hired ? choice.apply.success : choice.apply.fail;
   }
 
@@ -1515,7 +1533,6 @@ export function applyChoice(stats, card, side, rng = Math.random) {
     outcome = `${passed ? '✅' : '❌'} ${label} ${passed ? 'passed' : 'failed'}. ${result?.outcome ?? ''}`;
   }
 
-  const days = choice.days ?? card.days ?? DEFAULT_DAYS_PER_TURN;
   for (let d = next.day; d < next.day + days; d++) {
     for (const flow of next.flows) {
       if (!isDue(flow, d)) continue;
@@ -1548,14 +1565,15 @@ export function applyChoice(stats, card, side, rng = Math.random) {
   if (isUnderSlept(next)) { rate -= HEALTH_LOSS_PER_WEEK; healthCauses.push('😴 Under-slept'); }
   if (next.wealth < 0) { rate -= DEBT_HEALTH_LOSS_PER_WEEK; healthCauses.push('💳 In debt'); }
   if (rate === 0) rate = HEALTH_GAIN_PER_WEEK;
-  next.health = Math.max(0, Math.min(100, Math.round(next.health + rate * weeks)));
-  const healthDelta = next.health - healthBefore;
+  // Kept fractional so a daily -2/wk drain adds up; shown rounded.
+  next.health = Math.max(0, Math.min(100, +(next.health + rate * weeks).toFixed(3)));
+  const healthDelta = Math.round(next.health) - Math.round(healthBefore);
 
   const newGoals = GOALS.filter((g) => !next.goalsDone.includes(g.id) && g.isDone(next));
   next.goalsDone.push(...newGoals.map((g) => g.id));
 
   // The only way to lose: health hits 0 (from debt, lack of sleep, or both).
-  const gameOver = next.health <= 0 ? 'health' : null;
+  const gameOver = next.health < 0.5 ? 'health' : null;
 
   return { stats: next, ledger, gains, outcome, newGoals, healthDelta, healthCauses, gameOver };
 }

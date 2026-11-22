@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { STAT_META, formatDelta, formatFlow, jobChance, jobPay, choiceChance, resolve } from '../decisions.js';
+import { STAT_META, WEEKDAYS, PAYDAY, dayOfWeek, formatDelta, formatFlow, jobChance, jobPay, choiceChance, resolve } from '../decisions.js';
 
 const SWIPE_THRESHOLD = 90; // px of drag needed to commit a choice
 const DRAG_START = 8;       // px of movement before a touch counts as a drag (vs a tap)
@@ -14,7 +14,7 @@ function Effects({ choice, stats }) {
     <ul className="effects">
       {apply && (
         <li className="pos">
-          🎲 {pct(jobChance(apply, stats))} → {formatFlow({ ...apply.job, amount: jobPay(apply.job, stats) })}
+          🎲 {pct(jobChance(apply, stats))} → {formatFlow({ weekday: PAYDAY, ...apply.job, amount: jobPay(apply.job, stats) })}
         </li>
       )}
       {apply?.job.skillPay && <li>💪 Pay scales with skills</li>}
@@ -132,7 +132,7 @@ export default function SwipeCard({ decision, stats, onChoose }) {
 
           <div className="card-head">
             <span>{cardKind(decision)}</span>
-            <span>Week {Math.ceil(stats.day / 7)}</span>
+            <span>{WEEKDAYS[dayOfWeek(stats.day)]} · Week {Math.ceil(stats.day / 7)}</span>
           </div>
           <div className="card-image">
             {decision.details ? (

@@ -12,6 +12,8 @@ import {
   isIncomeStream,
   LOW_HEALTH,
   STAT_META,
+  WEEKDAYS,
+  dayOfWeek,
   isUnderSlept,
   createInitialStats,
   currentGoal,
@@ -242,7 +244,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="board">
-        <Cell label="Day" value={String(stats.day).padStart(2, '0')} />
+        <Cell label={`Day · ${WEEKDAYS[dayOfWeek(stats.day)]}`} value={String(stats.day).padStart(2, '0')} />
         <Cell
           label="Income ▾"
           value={`${net >= 0 ? '+' : ''}${money(net)}/wk`}
