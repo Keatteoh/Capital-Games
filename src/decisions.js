@@ -15,11 +15,35 @@ const HEALTH_LOSS_PER_WEEK = 10;         // while under-slept
 const HEALTH_GAIN_PER_WEEK = 5;          // while rested
 const LOW_HEALTH_JOB_PENALTY = 0.15;     // subtracted from job application odds
 
+// Skill-based pay: jobs marked `skillPay` pay base × (PAY_BASE + PAY_PER_SKILL × skills).
+// 0 skills = 70% of base, 3 skills = 100%, capped at 150%.
+const PAY_BASE = 0.7;
+const PAY_PER_SKILL = 0.1;
+const PAY_MAX = 1.5;
+
+// Social checks: each social point adds this much to the odds of passing.
+const SOCIAL_PER_POINT = 0.08;
+
+export const THERAPY_EVERY = 30; // days between therapy sessions
+
+// Big bills (events marked `big: true`) stay out of the deck for the first
+// BIG_EXPENSES_AFTER swipes, so the early game only throws small costs at you.
+export const BIG_EXPENSES_AFTER = 20;
+
 // ---------- Helpers ----------
 export const hasJob = (s) => s.flows.some((f) => f.kind === 'job');
 export const hasFlag = (s, flag) => s.flags.includes(flag);
+export const hasCommitment = (s, id) => s.commitments.some((c) => c.id === id);
 export const isUnderSlept = (s) => s.spareTime < SLEEP_THRESHOLD;
 const clampChance = (p) => Math.max(0.05, Math.min(0.95, p));
+
+// Lets a card's `effects` be a plain object or a function of the current stats.
+export const resolve = (v, s) => (typeof v === 'function' ? v(s) : v);
+
+export const payMultiplier = (s) => Math.min(PAY_MAX, PAY_BASE + PAY_PER_SKILL * s.skills);
+export const skillPay = (amount, s) => Math.round(amount * payMultiplier(s));
+export const jobPay = (job, s) => (job.skillPay ? skillPay(job.amount, s) : job.amount);
+const socialOdds = (base, s) => clampChance(base + SOCIAL_PER_POINT * s.social);
 
 // Job odds after the low-health penalty. Used for both the card display and the roll.
 export function jobChance(apply, s) {
@@ -27,22 +51,33 @@ export function jobChance(apply, s) {
   return clampChance(apply.chance(s) - penalty);
 }
 
+// Odds shown on the card's dice for either a job application or a stat check.
+export function choiceChance(choice, s) {
+  if (choice.apply) return jobChance(choice.apply, s);
+  if (choice.check) return clampChance(choice.check.chance(s));
+  return null;
+}
+
 let flowId = 0;
 function makeFlow(def, startDay) {
   // A one-off payment due in N days, e.g. a late bill: { label, amount, inDays: 14 }
   if (def.inDays != null) {
     const due = startDay + def.inDays;
-    return { id: ++flowId, label: def.label, kind: null, amount: def.amount, every: 'daily',
-      startDay: due, endDay: due + 1, scheduled: true };
+    return { id: ++flowId, label: def.label, kind: null, stat: 'wealth', chance: null, commitmentId: null,
+      amount: def.amount, every: 'daily', startDay: due, endDay: due + 1, scheduled: true };
   }
+  const start = startDay + (def.afterDays ?? 0);
   return {
     id: ++flowId,
     label: def.label,
     kind: def.kind ?? null,             // 'job' marks employment
+    stat: def.stat ?? 'wealth',         // which stat this flow changes
+    chance: def.chance ?? null,         // null = always; otherwise rolled each time it's due
+    commitmentId: def.commitmentId ?? null, // removed when that commitment is dropped
     amount: def.amount,                 // + income, - expense
     every: def.every,                   // 'daily' | 'weekly' | 'monthly'
-    startDay,
-    endDay: def.durationDays ? startDay + def.durationDays : null, // exclusive
+    startDay: start,
+    endDay: def.durationDays ? start + def.durationDays : null, // exclusive
   };
 }
 
@@ -55,6 +90,7 @@ export function createInitialStats() {
   }
   return {
     day: 1,
+    swipes: 0,          // choices made so far
     wealth: randomInt(5, 500),
     social: 0,
     spareTime: 24,
@@ -62,6 +98,9 @@ export function createInitialStats() {
     skills: 0,
     flows,
     flags: [],          // things the player has learned/unlocked, e.g. 'chainsaw'
+    commitments: [],    // ongoing hobbies etc.: { id, label, image, hours, keepPrompt, dropLabel }
+    queue: [],          // commitment ids waiting for a "keep or drop?" card (from therapy)
+    nextTherapy: null,  // day the next therapy session is due
     usedCards: [],      // one-off cards already seen
     goalsDone: [],
   };
@@ -73,7 +112,7 @@ export const GOALS = [
   {
     id: 'job',
     title: 'Get a job',
-    hint: 'Study to raise your skills, then apply. More skills = better odds.',
+    hint: 'Study to raise your skills, then apply. More skills = better odds and better pay.',
     isDone: (s) => hasJob(s),
   },
   {
@@ -91,11 +130,22 @@ export const currentGoal = (s) => GOALS.find((g) => !s.goalsDone.includes(g.id))
 //   repeatable: can show up more than once (default: one-off)
 //   when(stats): only drawn when this returns true
 //   days: how many days the turn takes (default 7); a choice can override with its own `days`
+//   kicker: label in the card's top-left corner (default: Decision / Job offer / Surprise!)
 // Choice fields:
-//   effects:   one-time changes, e.g. { wealth: -100 } (lump sum), { skills: 1 }
+//   effects:   one-time changes, e.g. { wealth: -100, skills: 1 }, or a function of stats
 //   recurring: repeating cash flows, e.g. { label: 'Gym', amount: -20, every: 'monthly' }
 //   setFlags:  flags to unlock other cards, e.g. ['chainsaw']
 //   apply:     a job application; `chance(stats)` is the success probability
+//   check:     a dice roll, e.g. a social check:
+//              { stat: 'social', chance(stats), success: result | [results], fail: result | [results] }
+//              A list of results picks one at random (each may have `when` and `weight`).
+//              A result can use any choice field plus `job` (start a job) and `raise` (0.15 = +15% pay).
+//   commit:    start an ongoing commitment (hobby, club, pet) that uses spare time every week:
+//              { id, label, image, hours, cost: { amount, every }, gains: [{ stat, amount, every,
+//                chance?, afterDays? }], keepPrompt?, dropLabel?, dropOutcome? }
+//              Therapy sessions let you drop commitments to get the hours back.
+const SKIP = { label: 'Skip', outcome: 'You let this one pass.' };
+
 export const DECISIONS = [
   // --- Upskilling ---
   {
@@ -168,7 +218,7 @@ export const DECISIONS = [
         fail: 'Two weeks of waiting, then a rejection email.',
       },
     },
-    right: { label: 'Skip', outcome: 'You let this one pass.' },
+    right: SKIP,
   },
   {
     id: 'apply-cafe',
@@ -188,7 +238,7 @@ export const DECISIONS = [
         fail: 'They went with someone who had more experience.',
       },
     },
-    right: { label: 'Skip', outcome: 'You let this one pass.' },
+    right: SKIP,
   },
   {
     id: 'apply-landscaping',
@@ -202,13 +252,13 @@ export const DECISIONS = [
       effects: { wealth: -5 },
       apply: {
         chance: (s) => clampChance(0.5 + 0.1 * s.skills),
-        job: { label: 'Landscaping job', amount: 220, every: 'weekly' },
+        job: { label: 'Landscaping job', amount: 220, every: 'weekly', skillPay: true },
         effects: { spareTime: -12 },
         success: 'The chainsaw course paid off. You start Monday!',
         fail: 'The crew filled the spot before you heard back.',
       },
     },
-    right: { label: 'Skip', outcome: 'You let this one pass.' },
+    right: SKIP,
   },
   {
     id: 'apply-developer',
@@ -222,13 +272,13 @@ export const DECISIONS = [
       effects: { wealth: -5 },
       apply: {
         chance: (s) => clampChance(0.05 + 0.08 * s.skills),
-        job: { label: 'Junior developer', amount: 400, every: 'weekly' },
+        job: { label: 'Junior developer', amount: 400, every: 'weekly', skillPay: true },
         effects: { spareTime: -12 },
         success: 'You passed the technical interview. Welcome aboard!',
         fail: 'Three rounds of interviews, then a no. More skills would help.',
       },
     },
-    right: { label: 'Skip', outcome: 'You let this one pass.' },
+    right: SKIP,
   },
 
   // --- Life ---
@@ -253,9 +303,14 @@ export const DECISIONS = [
     prompt: 'Join the local gym, or stay in and subscribe to a streaming service?',
     left: {
       label: 'Gym',
-      effects: { social: 1, spareTime: -3 },
-      recurring: [{ label: 'Gym membership', amount: -20, every: 'monthly' }],
-      outcome: 'You joined the gym and recognise a few regulars already.',
+      effects: { social: 1 },
+      commit: {
+        id: 'gym', label: 'Gym', image: '🏋️', hours: 3,
+        cost: { amount: -20, every: 'monthly' },
+        gains: [{ stat: 'health', amount: 5, every: 'monthly' }],
+        keepPrompt: 'Keep your gym membership?',
+      },
+      outcome: 'You joined the gym and recognize a few regulars already.',
     },
     right: {
       label: 'Stream',
@@ -295,14 +350,167 @@ export const DECISIONS = [
       outcome: 'You kept your evenings free.',
     },
   },
+
+  // --- Hobbies & commitments: cost spare time every week, pay off over time ---
+  {
+    id: 'hobby-guitar',
+    kicker: '🎨 Hobby',
+    image: '🎸',
+    prompt: 'Pick up the guitar? Lessons are $30 a month.',
+    left: {
+      label: 'Start',
+      commit: {
+        id: 'guitar', label: 'Guitar', image: '🎸', hours: 3,
+        cost: { amount: -30, every: 'monthly' },
+        gains: [{ stat: 'skills', amount: 1, every: 'monthly' }],
+        keepPrompt: 'Keep up the guitar lessons?',
+      },
+      outcome: 'Sore fingertips, but you can already play three chords.',
+    },
+    right: SKIP,
+  },
+  {
+    id: 'hobby-soccer',
+    kicker: '🎨 Hobby',
+    image: '⚽',
+    prompt: 'A pickup soccer group plays every Sunday. Join them?',
+    left: {
+      label: 'Join',
+      commit: {
+        id: 'soccer', label: 'Sunday soccer', image: '⚽', hours: 2,
+        gains: [
+          { stat: 'social', amount: 1, every: 'monthly' },
+          { stat: 'health', amount: 5, every: 'monthly' },
+        ],
+        keepPrompt: 'Keep playing Sunday soccer?',
+      },
+      outcome: 'You scored once and made a few friends.',
+    },
+    right: SKIP,
+  },
+  {
+    id: 'hobby-baking',
+    kicker: '🎨 Hobby',
+    image: '🥖',
+    prompt: 'Bake sourdough to sell at the Saturday farmers market?',
+    left: {
+      label: 'Bake',
+      commit: {
+        id: 'baking', label: 'Market baking', image: '🥖', hours: 5,
+        cost: { amount: -10, every: 'weekly' },
+        gains: [{ stat: 'wealth', amount: 35, every: 'weekly' }],
+        keepPrompt: 'Keep baking for the market?',
+      },
+      outcome: 'Your first loaves sold out by 10 a.m.',
+    },
+    right: SKIP,
+  },
+  {
+    id: 'volunteer-oldfolks',
+    image: '👵',
+    prompt: 'The old folks home needs weekend volunteers. Sign up?',
+    left: {
+      label: 'Sign up',
+      commit: {
+        id: 'oldfolks', label: 'Volunteering', image: '👵', hours: 5,
+        gains: [
+          { stat: 'social', amount: 1, every: 'weekly', chance: 0.35 },
+          { stat: 'wealth', amount: 50, every: 'monthly', chance: 0.3 },
+        ],
+        keepPrompt: 'Keep volunteering at the old folks home?',
+      },
+      outcome: 'The residents have great stories, and their families notice who shows up.',
+    },
+    right: { label: 'No', outcome: 'Maybe another time.' },
+  },
+  {
+    id: 'book-club',
+    image: '📖',
+    prompt: 'A neighbor invites you to their monthly book club. Join?',
+    left: {
+      label: 'Join',
+      commit: {
+        id: 'bookclub', label: 'Book club', image: '📖', hours: 3,
+        cost: { amount: -12, every: 'monthly' },
+        gains: [
+          { stat: 'social', amount: 1, every: 'monthly' },
+          { stat: 'skills', amount: 1, every: 'monthly', afterDays: 60 },
+        ],
+        keepPrompt: 'Stay in the book club?',
+      },
+      outcome: 'Lots of reading, but the discussions are worth it.',
+    },
+    right: SKIP,
+  },
+  {
+    id: 'therapy-signup',
+    image: '🛋️',
+    prompt: 'Your week is filling up. Start seeing a therapist once a month?',
+    when: (s) => s.commitments.length >= 2 && !hasCommitment(s, 'therapy'),
+    left: {
+      label: 'Book it',
+      effects: { health: 5 },
+      commit: {
+        id: 'therapy', label: 'Therapy', image: '🛋️', hours: 1,
+        cost: { amount: -40, every: 'monthly' },
+        keepPrompt: 'Keep seeing your therapist?',
+        dropLabel: 'Stop',
+      },
+      outcome: 'Good first session. Each month you can review your commitments and drop some.',
+    },
+    right: { label: 'Not now', outcome: 'You will manage on your own for now.' },
+  },
 ];
+
+// Monthly therapy session: drawn automatically when it's due.
+const THERAPY_SESSION = {
+  id: 'therapy-session',
+  therapy: true,
+  repeatable: true,
+  kicker: '🛋️ Monthly',
+  image: '🛋️',
+  days: 1,
+  prompt: 'Therapy day. Want to go through your commitments and drop some?',
+  left: {
+    label: 'Reassess',
+    reassess: true,
+    outcome: 'You talked through everything on your plate. Time to decide what stays.',
+  },
+  right: {
+    label: 'Just talk',
+    effects: { health: 5 },
+    outcome: 'A good chat. You feel lighter.',
+  },
+};
+
+// One "keep or drop?" card per commitment, queued by a therapy session.
+function reassessCard(c) {
+  return {
+    id: `reassess-${c.id}`,
+    queued: true,
+    repeatable: true,
+    kicker: '🛋️ Reassess',
+    image: c.image,
+    days: 0,
+    prompt: c.keepPrompt ?? `Keep up ${c.label.toLowerCase()}?`,
+    left: {
+      label: c.dropLabel ?? 'Drop',
+      drop: c.id,
+      effects: { spareTime: c.hours },
+      outcome: c.dropOutcome ?? `You let go of ${c.label.toLowerCase()} and got ${c.hours}h of spare time back.`,
+    },
+    right: { label: 'Keep', outcome: `${c.label} stays.` },
+  };
+}
 
 // ---------- Surprise events ----------
 // Same shape as cards, but they interrupt the deck at random (EVENT_CHANCE per turn).
-// Events are repeatable unless `once: true`.
+// Events are repeatable unless `once: true`. `big: true` events wait until
+// BIG_EXPENSES_AFTER swipes have passed.
 export const EVENTS = [
   {
     id: 'medical-bill',
+    big: true,
     weight: (s) => (s.health < LOW_HEALTH ? 4 : 1), // much likelier when run down
     image: '🏥',
     prompt: 'You sprained your ankle. The clinic sends a $180 bill.',
@@ -334,6 +542,7 @@ export const EVENTS = [
   },
   {
     id: 'phone-broken',
+    big: true,
     image: '📱',
     prompt: 'You dropped your phone and the screen shattered.',
     left: {
@@ -349,6 +558,7 @@ export const EVENTS = [
   },
   {
     id: 'dentist',
+    big: true,
     image: '🦷',
     prompt: 'A nagging toothache. The dentist quotes $250.',
     left: {
@@ -365,6 +575,7 @@ export const EVENTS = [
   },
   {
     id: 'rent-increase',
+    big: true,
     once: true,
     image: '🏠',
     prompt: 'Your landlord is raising the rent by $10 a week.',
@@ -378,6 +589,76 @@ export const EVENTS = [
       label: 'Move out',
       effects: { wealth: -150, spareTime: -4 },
       outcome: 'Moving cost $150 and a weekend, but your rent stays the same.',
+    },
+  },
+  {
+    id: 'wedding',
+    big: true,
+    once: true,
+    image: '💍',
+    prompt: 'Your cousin is getting married out of state. Travel and a gift come to $150.',
+    left: {
+      label: 'Go',
+      effects: { wealth: -150, social: 2 },
+      outcome: 'You danced all night and caught up with the whole family.',
+    },
+    right: {
+      label: 'Send a card',
+      effects: { wealth: -20, social: -1 },
+      outcome: 'Family noticed you were not there.',
+    },
+  },
+
+  // --- Small everyday costs (common early on) ---
+  {
+    id: 'parking-ticket',
+    image: '🅿️',
+    prompt: 'You got a $30 parking ticket.',
+    left: {
+      label: 'Pay it',
+      effects: { wealth: -30 },
+      outcome: 'Paid. Lesson learned about street cleaning day.',
+    },
+    right: {
+      label: 'Contest it',
+      check: {
+        chance: () => 0.4,
+        success: { outcome: 'The sign was hidden behind a tree. Ticket dismissed.' },
+        fail: {
+          effects: { wealth: -45 },
+          outcome: 'Contest denied, with a $15 admin fee on top.',
+        },
+      },
+    },
+  },
+  {
+    id: 'charger',
+    image: '🔌',
+    prompt: 'Your phone charger died. A new one is $25.',
+    left: {
+      label: 'Buy one',
+      effects: { wealth: -25 },
+      outcome: 'Fully charged again.',
+    },
+    right: {
+      label: 'Borrow',
+      effects: { social: -1 },
+      outcome: 'Your roommate is getting tired of lending theirs.',
+    },
+  },
+  {
+    id: 'birthday-gift',
+    image: '🎁',
+    prompt: 'It is a friend\'s birthday this weekend. Chip in $20 for a group gift?',
+    left: {
+      label: 'Chip in',
+      effects: { wealth: -20, social: 1 },
+      outcome: 'They loved it. Your name was on the card.',
+    },
+    right: {
+      label: 'Skip',
+      effects: { social: -1 },
+      outcome: 'You sent a text instead.',
     },
   },
   {
@@ -395,6 +676,268 @@ export const EVENTS = [
       outcome: 'You spent $40 on dinner with friends and kept the rest.',
     },
   },
+
+  // --- Social checks ---
+  {
+    id: 'party',
+    image: '🎉',
+    prompt: 'A friend invites you to a party across town.',
+    left: {
+      label: 'Go',
+      effects: { wealth: -15 },
+      check: {
+        stat: 'social',
+        chance: (s) => socialOdds(0.2, s),
+        success: [
+          {
+            when: (s) => !hasJob(s),
+            job: { label: 'Job from a party contact', amount: 180, every: 'weekly' },
+            effects: { spareTime: -10 },
+            outcome: 'You hit it off with a manager who is hiring. You start next week!',
+          },
+          {
+            effects: { skills: 1, social: 1 },
+            outcome: 'A designer at the party showed you a few tricks. +1 skill.',
+          },
+          {
+            when: (s) => !hasFlag(s, 'gift-bike'),
+            setFlags: ['gift-bike'],
+            recurring: [{ label: 'Bike commute savings', amount: 10, every: 'weekly' }],
+            outcome: 'A new friend gave you their old bike. No more bus fares.',
+          },
+        ],
+        fail: { outcome: 'You spent most of the night by the snack table.' },
+      },
+    },
+    right: { label: 'Stay in', outcome: 'A quiet night in.' },
+  },
+  {
+    id: 'yard-sale',
+    image: '🏷️',
+    prompt: 'There is a yard sale down the street this weekend. Check it out?',
+    left: {
+      label: 'Browse',
+      check: {
+        stat: 'social',
+        chance: (s) => socialOdds(0.15, s),
+        success: {
+          effects: { wealth: 300 },
+          outcome: 'You got chatting with the seller, who let you dig through the attic: a crate of rare first-press records. A collector paid $300.',
+        },
+        fail: {
+          effects: { wealth: 15 },
+          outcome: 'You found a vintage lamp and flipped it for $15.',
+        },
+      },
+    },
+    right: SKIP,
+  },
+  {
+    id: 'stray-cat',
+    image: '🐈',
+    prompt: 'A stray cat keeps showing up at your door. Take it in?',
+    when: (s) => !hasCommitment(s, 'cat'),
+    left: {
+      label: 'Adopt',
+      effects: { wealth: -40 },
+      commit: {
+        id: 'cat', label: 'Cat', image: '🐈', hours: 2,
+        cost: { amount: -12, every: 'weekly' },
+        gains: [
+          { stat: 'social', amount: 1, every: 'monthly', afterDays: 30 },
+          { stat: 'skills', amount: 1, every: 'monthly', afterDays: 60 },
+        ],
+        keepPrompt: 'Find your cat a loving new home?',
+        dropLabel: 'Rehome',
+        dropOutcome: 'A friend gave your cat a loving new home. You got 2h of spare time back.',
+      },
+      outcome: 'A $40 vet checkup, and now you have a roommate who purrs.',
+    },
+    right: { label: 'Shoo', outcome: 'It wandered off down the street.' },
+  },
+  {
+    id: 'networking-mixer',
+    image: '🤝',
+    prompt: 'A local industry mixer has $20 tickets. Go?',
+    left: {
+      label: 'Go',
+      effects: { wealth: -20 },
+      check: {
+        stat: 'social',
+        chance: (s) => socialOdds(0.15, s),
+        success: [
+          {
+            when: (s) => !hasJob(s),
+            job: { label: 'Job from the mixer', amount: 200, every: 'weekly', skillPay: true },
+            effects: { spareTime: -10 },
+            outcome: 'A founder liked your pitch and offered you a job. Pay depends on your skills.',
+          },
+          {
+            effects: { skills: 1 },
+            outcome: 'A mentor offered to review your work. +1 skill.',
+          },
+        ],
+        fail: { outcome: 'Lots of business cards, no real conversations.' },
+      },
+    },
+    right: SKIP,
+  },
+  {
+    id: 'help-move',
+    image: '📦',
+    prompt: 'Your neighbor asks for help moving on Saturday.',
+    left: {
+      label: 'Help',
+      check: {
+        chance: () => 0.5,
+        success: {
+          effects: { wealth: 40, social: 1, health: -5 },
+          outcome: 'They insisted on paying you $40 and buying pizza.',
+        },
+        fail: {
+          effects: { social: 1, health: -5 },
+          outcome: 'A sore back, but a grateful neighbor.',
+        },
+      },
+    },
+    right: { label: 'Make excuses', outcome: 'You were suddenly very busy that day.' },
+  },
+  {
+    id: 'found-wallet',
+    once: true,
+    image: '👛',
+    prompt: 'You found a wallet on the sidewalk with $60 cash inside.',
+    left: {
+      label: 'Return it',
+      check: {
+        chance: () => 0.5,
+        success: {
+          effects: { wealth: 40, social: 1 },
+          outcome: 'The owner was so relieved they gave you a $40 reward.',
+        },
+        fail: {
+          effects: { social: 1 },
+          outcome: 'The owner was thrilled. Good karma.',
+        },
+      },
+    },
+    right: {
+      label: 'Keep the cash',
+      effects: { wealth: 60, social: -1 },
+      outcome: '$60 richer, but word gets around.',
+    },
+  },
+  {
+    id: 'trivia-night',
+    image: '🧠',
+    prompt: 'Coworkers invite you to pub trivia. It is $15 to enter.',
+    when: (s) => hasJob(s),
+    left: {
+      label: 'Join',
+      effects: { wealth: -15 },
+      check: {
+        stat: 'skills',
+        chance: (s) => clampChance(0.15 + 0.07 * s.skills),
+        success: {
+          effects: { wealth: 100, social: 1 },
+          outcome: 'Your team won! Your share of the prize was $100.',
+        },
+        fail: {
+          effects: { social: 1 },
+          outcome: 'Fourth place, but a fun night with the team.',
+        },
+      },
+    },
+    right: { label: 'Pass', outcome: 'You headed home instead.' },
+  },
+  {
+    id: 'freelance-gig',
+    image: '🧰',
+    prompt: 'Someone needs a quick freelance project done. The pay depends on your skills.',
+    when: (s) => s.skills >= 2,
+    left: {
+      label: 'Take it',
+      effects: (s) => ({ wealth: skillPay(150, s), health: -5 }),
+      outcome: 'Late nights, but the client paid on delivery.',
+    },
+    right: { label: 'Pass', outcome: 'You kept your week clear.' },
+  },
+  {
+    id: 'performance-review',
+    weight: () => 0.5,
+    image: '📈',
+    prompt: 'It is review season. Ask your manager for a raise?',
+    when: (s) => hasJob(s),
+    left: {
+      label: 'Ask',
+      check: {
+        stat: 'skills',
+        chance: (s) => clampChance(0.15 + 0.07 * s.skills + 0.03 * s.social),
+        success: { raise: 0.15, outcome: 'Your manager agreed: a 15% raise!' },
+        fail: { outcome: 'Not this year. Build your skills and try again.' },
+      },
+    },
+    right: { label: 'Stay quiet', outcome: 'Maybe next review.' },
+  },
+  {
+    id: 'friend-loan',
+    image: '💸',
+    prompt: 'An old friend asks to borrow $100 until next month.',
+    left: {
+      label: 'Lend it',
+      effects: { wealth: -100 },
+      check: {
+        chance: (s) => socialOdds(0.5, s),
+        success: {
+          recurring: [{ label: 'Loan repaid', amount: 110, inDays: 30 }],
+          outcome: 'They promised to pay you back $110 next month, with a thank-you.',
+        },
+        fail: {
+          effects: { social: 1 },
+          outcome: 'They went quiet. The money is gone, but they owe you one.',
+        },
+      },
+    },
+    right: {
+      label: 'Say no',
+      effects: { social: -1 },
+      outcome: 'Things are a little awkward between you now.',
+    },
+  },
+  {
+    id: 'flu',
+    weight: (s) => (s.health < LOW_HEALTH ? 3 : 1),
+    image: '🤒',
+    prompt: 'You have come down with the flu.',
+    left: {
+      label: 'Rest',
+      days: 10,
+      effects: { health: 15, social: -1 },
+      outcome: 'Ten days in bed. You missed some plans but feel much better.',
+    },
+    right: {
+      label: 'Push through',
+      effects: { health: -15 },
+      outcome: 'You kept going and feel worse for it.',
+    },
+  },
+  {
+    id: 'vet-bill',
+    big: true,
+    image: '🐾',
+    prompt: 'Your cat swallowed a hair tie. The vet bill is $160.',
+    when: (s) => hasCommitment(s, 'cat'),
+    left: {
+      label: 'Pay now',
+      effects: { wealth: -160 },
+      outcome: 'Your cat is fine, and back to knocking things off shelves.',
+    },
+    right: {
+      label: 'Payment plan',
+      recurring: [{ label: 'Vet payment plan', amount: -20, every: 'weekly', durationDays: 63 }],
+      outcome: 'The vet set up a plan: $20 a week for 9 weeks ($180 in total).',
+    },
+  },
 ].map((e) => ({ ...e, event: true, repeatable: !e.once }));
 
 const pick = (list, rng) => list[Math.floor(rng() * list.length)] ?? null;
@@ -410,11 +953,21 @@ function pickWeighted(list, stats, rng) {
   return list[list.length - 1] ?? null;
 }
 
-// Picks the next card: sometimes a surprise event, otherwise a random eligible
-// deck card. Avoids showing the same card twice in a row.
+// Picks the next card. In priority order: queued "keep or drop?" cards, a due
+// therapy session, sometimes a surprise event, otherwise a random deck card.
+// Avoids showing the same card twice in a row.
 export function drawCard(stats, lastId = null, rng = Math.random) {
+  const queued = stats.commitments.find((c) => c.id === stats.queue[0]);
+  if (queued) return reassessCard(queued);
+
+  if (hasCommitment(stats, 'therapy') && stats.day >= stats.nextTherapy) return THERAPY_SESSION;
+
   const eligible = (list) =>
-    list.filter((c) => c.id !== lastId && !stats.usedCards.includes(c.id) && (!c.when || c.when(stats)));
+    list.filter((c) =>
+      c.id !== lastId &&
+      !stats.usedCards.includes(c.id) &&
+      (!c.big || stats.swipes >= BIG_EXPENSES_AFTER) &&
+      (!c.when || c.when(stats)));
 
   if (stats.day > 1 && rng() < EVENT_CHANCE) {
     const event = pickWeighted(eligible(EVENTS), stats, rng);
@@ -443,10 +996,14 @@ const PERIOD_PLURAL = { daily: 'days', weekly: 'wks', monthly: 'mos' };
 
 export function formatFlow(flow) {
   const sign = flow.amount > 0 ? '+' : '-';
-  const amount = `${sign}$${Math.abs(flow.amount)}`;
+  const stat = flow.stat ?? 'wealth';
+  const amount = stat === 'wealth'
+    ? `${sign}$${Math.abs(flow.amount)}`
+    : `${sign}${Math.abs(flow.amount)} ${STAT_META[stat].label.toLowerCase()}`;
+  const odds = flow.chance != null ? `${Math.round(flow.chance * 100)}%: ` : '';
   if (flow.inDays != null) return `${amount} due in ${flow.inDays} days`;
   if (flow.scheduled) return amount;
-  const base = `${amount}/${PERIOD_SHORT[flow.every]}`;
+  const base = `${odds}${amount}/${PERIOD_SHORT[flow.every]}`;
   if (!flow.durationDays) return base;
   return `${base} for ${flow.durationDays / PERIOD_DAYS[flow.every]} ${PERIOD_PLURAL[flow.every]}`;
 }
@@ -460,9 +1017,10 @@ export function formatDelta(key, delta) {
 }
 
 // Net recurring cash flow, normalised to a weekly figure for the HUD.
+// Leaves out stat gains and chance-based payouts.
 export function weeklyNet(flows) {
   return flows
-    .filter((f) => !f.scheduled)
+    .filter((f) => !f.scheduled && f.stat === 'wealth' && f.chance == null)
     .reduce((sum, f) => sum + (f.amount * 7) / PERIOD_DAYS[f.every], 0);
 }
 
@@ -479,40 +1037,101 @@ function addEffects(stats, effects = {}) {
   }
 }
 
+function startCommitment(next, c) {
+  if (next.commitments.some((x) => x.id === c.id)) return;
+  next.commitments.push({
+    id: c.id, label: c.label, image: c.image, hours: c.hours,
+    keepPrompt: c.keepPrompt, dropLabel: c.dropLabel, dropOutcome: c.dropOutcome,
+  });
+  next.spareTime -= c.hours;
+  if (c.cost) next.flows.push(makeFlow({ label: c.label, ...c.cost, commitmentId: c.id }, next.day));
+  for (const g of c.gains ?? []) {
+    // Gains start after one period by default (no +1 social on the day you join).
+    const afterDays = g.afterDays ?? PERIOD_DAYS[g.every];
+    next.flows.push(makeFlow({ label: c.label, ...g, afterDays, commitmentId: c.id }, next.day));
+  }
+  if (c.id === 'therapy') next.nextTherapy = next.day + THERAPY_EVERY;
+}
+
+function dropCommitment(next, id) {
+  next.commitments = next.commitments.filter((c) => c.id !== id);
+  next.flows = next.flows.filter((f) => f.commitmentId !== id);
+}
+
+// Applies a choice, or one result of a check. `before` is the stats before the
+// turn, used for anything that scales with stats (pay, effects functions).
+function applyResult(next, result, before, ledger) {
+  if (!result) return;
+  const effects = resolve(result.effects, before);
+  addEffects(next, effects);
+  if (effects?.wealth) ledger['One-time'] = (ledger['One-time'] ?? 0) + effects.wealth;
+  for (const def of result.recurring ?? []) next.flows.push(makeFlow(def, next.day));
+  for (const flag of result.setFlags ?? []) if (!next.flags.includes(flag)) next.flags.push(flag);
+  if (result.job) {
+    next.flows.push(makeFlow({ ...result.job, amount: jobPay(result.job, before), kind: 'job' }, next.day));
+  }
+  if (result.raise) {
+    next.flows = next.flows.map((f) =>
+      f.kind === 'job' ? { ...f, amount: Math.round(f.amount * (1 + result.raise)) } : f);
+  }
+  if (result.commit) startCommitment(next, result.commit);
+  if (result.drop) dropCommitment(next, result.drop);
+  if (result.reassess) next.queue = next.commitments.map((c) => c.id);
+}
+
+// Picks one result from a check branch: a single result, or a list to choose from.
+function pickResult(branch, stats, rng) {
+  if (!Array.isArray(branch)) return branch;
+  const options = branch.filter((r) => !r.when || r.when(stats));
+  return pickWeighted(options, stats, rng);
+}
+
 // Applies the chosen side of a card, then advances time day by day.
-// Returns { stats, ledger, outcome, newGoals, gameOver }.
+// Returns { stats, ledger, gains, outcome, newGoals, healthDelta, gameOver }.
 export function applyChoice(stats, card, side, rng = Math.random) {
   const choice = card[side];
   const next = {
     ...stats,
     flows: [...stats.flows],
     flags: [...stats.flags],
+    commitments: [...stats.commitments],
+    queue: card.queued ? stats.queue.slice(1) : [...stats.queue],
     usedCards: card.repeatable ? stats.usedCards : [...stats.usedCards, card.id],
     goalsDone: [...stats.goalsDone],
+    swipes: stats.swipes + 1,
   };
-  const ledger = {};
+  const ledger = {}; // money in/out this turn, by label
+  const gains = {};  // stat changes from commitments this turn: { label: { social: 1 } }
   let outcome = choice.outcome ?? '';
 
-  addEffects(next, choice.effects);
-  if (choice.effects?.wealth) ledger['One-time'] = choice.effects.wealth;
-  for (const def of choice.recurring ?? []) next.flows.push(makeFlow(def, next.day));
-  for (const flag of choice.setFlags ?? []) if (!next.flags.includes(flag)) next.flags.push(flag);
+  applyResult(next, choice, stats, ledger);
 
   if (choice.apply) {
     const hired = rng() < jobChance(choice.apply, stats);
-    if (hired) {
-      next.flows.push(makeFlow({ ...choice.apply.job, kind: 'job' }, next.day));
-      addEffects(next, choice.apply.effects);
-    }
+    if (hired) applyResult(next, { job: choice.apply.job, effects: choice.apply.effects }, stats, ledger);
     outcome = hired ? choice.apply.success : choice.apply.fail;
+  }
+
+  if (choice.check) {
+    const passed = rng() < choiceChance(choice, stats);
+    const result = pickResult(passed ? choice.check.success : choice.check.fail, stats, rng);
+    applyResult(next, result, stats, ledger);
+    const label = choice.check.stat ? `${STAT_META[choice.check.stat].label} check` : 'Roll';
+    outcome = `${passed ? '✅' : '❌'} ${label} ${passed ? 'passed' : 'failed'}. ${result?.outcome ?? ''}`;
   }
 
   const days = choice.days ?? card.days ?? DEFAULT_DAYS_PER_TURN;
   for (let d = next.day; d < next.day + days; d++) {
     for (const flow of next.flows) {
-      if (isDue(flow, d)) {
+      if (!isDue(flow, d)) continue;
+      if (flow.chance != null && rng() >= flow.chance) continue;
+      if (flow.stat === 'wealth') {
         next.wealth += flow.amount;
         ledger[flow.label] = (ledger[flow.label] ?? 0) + flow.amount;
+      } else {
+        next[flow.stat] += flow.amount;
+        gains[flow.label] = gains[flow.label] ?? {};
+        gains[flow.label][flow.stat] = (gains[flow.label][flow.stat] ?? 0) + flow.amount;
       }
     }
   }
@@ -520,9 +1139,12 @@ export function applyChoice(stats, card, side, rng = Math.random) {
   next.flows = next.flows.filter((f) => f.endDay === null || f.endDay > next.day);
   next.spareTime = Math.max(0, next.spareTime);
   next.social = Math.max(0, next.social);
+  next.skills = Math.max(0, next.skills);
+  if (card.therapy) next.nextTherapy = next.day + THERAPY_EVERY;
 
   // Sleep: health drains while under-slept and slowly recovers while rested.
   const weeks = days / 7;
+  next.health = Math.max(0, Math.min(100, next.health));
   const healthBefore = next.health;
   const rate = isUnderSlept(next) ? -HEALTH_LOSS_PER_WEEK : HEALTH_GAIN_PER_WEEK;
   next.health = Math.max(0, Math.min(100, Math.round(next.health + rate * weeks)));
@@ -534,5 +1156,5 @@ export function applyChoice(stats, card, side, rng = Math.random) {
   const gameOver =
     next.wealth <= GAME_OVER_AT ? 'debt' : next.health <= 0 ? 'health' : null;
 
-  return { stats: next, ledger, outcome, newGoals, healthDelta, gameOver };
+  return { stats: next, ledger, gains, outcome, newGoals, healthDelta, gameOver };
 }

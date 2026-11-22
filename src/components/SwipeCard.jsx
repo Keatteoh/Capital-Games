@@ -1,16 +1,26 @@
 import { useEffect, useRef, useState } from 'react';
-import { STAT_META, formatDelta, formatFlow, jobChance } from '../decisions.js';
+import { STAT_META, formatDelta, formatFlow, jobChance, jobPay, choiceChance, resolve } from '../decisions.js';
 
 const SWIPE_THRESHOLD = 90; // px of drag needed to commit a choice
 const DRAG_START = 8;       // px of movement before a touch counts as a drag (vs a tap)
 
+const statName = (key) => STAT_META[key]?.label.toLowerCase();
+
 function Effects({ choice, stats }) {
-  const apply = choice.apply;
+  const { apply, check, commit } = choice;
+  const effects = resolve(choice.effects, stats) ?? {};
+  const pct = (p) => `${Math.round(p * 100)}%`;
   return (
     <ul className="effects">
       {apply && (
         <li className="pos">
-          🎲 {Math.round(jobChance(apply, stats) * 100)}% → {formatFlow(apply.job)}
+          🎲 {pct(jobChance(apply, stats))} → {formatFlow({ ...apply.job, amount: jobPay(apply.job, stats) })}
+        </li>
+      )}
+      {apply?.job.skillPay && <li>💪 Pay scales with skills</li>}
+      {check && (
+        <li className="pos">
+          🎲 {pct(choiceChance(choice, stats))} {check.stat ? `${statName(check.stat)} check` : 'chance'}
         </li>
       )}
       {choice.days && <li>⏳ {choice.days} days</li>}
@@ -19,18 +29,32 @@ function Effects({ choice, stats }) {
           {formatFlow(flow)}
         </li>
       ))}
-      {Object.entries(choice.effects ?? {}).map(([key, delta]) => (
+      {Object.entries(effects).map(([key, delta]) => (
         <li key={key} className={delta >= 0 ? 'pos' : 'neg'}>
-          {formatDelta(key, delta)} {key === 'wealth' ? 'once' : STAT_META[key]?.label.toLowerCase()}
+          {formatDelta(key, delta)} {key === 'wealth' ? 'once' : statName(key)}
         </li>
       ))}
+      {commit && (
+        <>
+          <li className="neg">🗓️ {formatDelta('spareTime', -commit.hours)} spare time, ongoing</li>
+          {commit.cost && <li className="neg">{formatFlow(commit.cost)}</li>}
+          {(commit.gains ?? []).map((g) => (
+            <li key={`${g.stat}-${g.every}`} className="pos">
+              {formatFlow(g)}
+              {g.afterDays > 30 && ` after ${g.afterDays / 30} mos`}
+            </li>
+          ))}
+        </>
+      )}
     </ul>
   );
 }
 
 function cardKind(decision) {
+  if (decision.kicker) return decision.kicker;
   if (decision.event) return '⚡ Surprise!';
   if (decision.left.apply) return 'Job offer';
+  if (decision.left.check?.stat) return `🎲 ${STAT_META[decision.left.check.stat].label} check`;
   return 'Decision';
 }
 
@@ -84,7 +108,8 @@ export default function SwipeCard({ decision, stats, onChoose }) {
   const progress = Math.min(Math.abs(dx) / SWIPE_THRESHOLD, 1);
   const activeSide = dx < -10 ? 'left' : dx > 10 ? 'right' : null;
   const isImageUrl = /[./]/.test(decision.image);
-  const apply = decision.left.apply;
+  const chance = choiceChance(decision.left, stats);
+  const check = decision.left.check;
 
   return (
     <>
@@ -114,14 +139,14 @@ export default function SwipeCard({ decision, stats, onChoose }) {
             ) : (
               <span className="emoji" aria-hidden="true">{decision.image}</span>
             )}
-            {apply && (
-              <div className="dice" aria-label={`${Math.round(jobChance(apply, stats) * 100)}% chance`}>
-                <b>{Math.round(jobChance(apply, stats) * 100)}%</b>
-                <small>Chance</small>
+            {chance != null && (
+              <div className="dice" aria-label={`${Math.round(chance * 100)}% chance`}>
+                <b>{Math.round(chance * 100)}%</b>
+                <small>{check?.stat ? STAT_META[check.stat].label : 'Chance'}</small>
               </div>
             )}
           </div>
-          <h1 className={`card-prompt ${apply ? 'has-dice' : ''}`}>{decision.prompt}</h1>
+          <h1 className={`card-prompt ${chance != null ? 'has-dice' : ''}`}>{decision.prompt}</h1>
         </article>
       </div>
 

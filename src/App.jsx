@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import SwipeCard from './components/SwipeCard.jsx';
 import {
   GOALS,
+  DECISIONS,
+  EVENTS,
   GAME_OVER_AT,
   LOW_HEALTH,
   STAT_META,
@@ -12,6 +14,7 @@ import {
   applyChoice,
   weeklyNet,
   formatFlow,
+  formatDelta,
   money,
 } from './decisions.js';
 
@@ -65,6 +68,22 @@ function DebtBar({ wealth }) {
   );
 }
 
+// Stat changes from commitments this turn, e.g. "Book club +1 social".
+function Gains({ gains }) {
+  const rows = Object.entries(gains ?? {}).flatMap(([label, stats]) =>
+    Object.entries(stats).filter(([, v]) => v !== 0).map(([stat, v]) => ({ label, stat, v })));
+  if (rows.length === 0) return null;
+  return (
+    <ul className="ledger">
+      {rows.map(({ label, stat, v }) => (
+        <li key={`${label}-${stat}`} className={v >= 0 ? 'pos' : 'neg'}>
+          {label} {formatDelta(stat, v)} {STAT_META[stat].label.toLowerCase()}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function Ledger({ ledger }) {
   const rows = Object.entries(ledger).filter(([, v]) => v !== 0);
   if (rows.length === 0) return null;
@@ -91,6 +110,7 @@ function Toast({ last, onClose }) {
       {last.goalMsg && <p className="goal-msg">{last.goalMsg}</p>}
       <p>{last.outcome}</p>
       <Ledger ledger={last.ledger} />
+      <Gains gains={last.gains} />
       {last.healthDelta < 0 && <p className="health-msg">😴 Under-slept: health {last.healthDelta}</p>}
     </button>
   );
@@ -110,6 +130,9 @@ function newGame() {
       healthDelta: -10,
     };
   }
+  // Dev only: ?card=<id> starts on that card, e.g. ?card=party.
+  const forced = import.meta.env.DEV && new URLSearchParams(window.location.search).get('card');
+  if (forced) game.card = [...DECISIONS, ...EVENTS].find((c) => c.id === forced) ?? game.card;
   return game;
 }
 
@@ -130,7 +153,13 @@ export default function App() {
       stats: result.stats,
       card: nextCard,
       turn: game.turn + 1,
-      last: { outcome: result.outcome, ledger: result.ledger, goalMsg, healthDelta: result.healthDelta },
+      last: {
+        outcome: result.outcome,
+        ledger: result.ledger,
+        gains: result.gains,
+        goalMsg,
+        healthDelta: result.healthDelta,
+      },
       status: result.gameOver ? 'lost' : allDone ? 'won' : !nextCard ? 'out' : 'playing',
       lostTo: result.gameOver,
     });
@@ -183,6 +212,22 @@ export default function App() {
                   </li>
                 ))}
               </ul>
+            )}
+            {stats.commitments.length > 0 && (
+              <>
+                <h3>Commitments</h3>
+                <ul>
+                  {stats.commitments.map((c) => (
+                    <li key={c.id}>
+                      <span>{c.image} {c.label}</span>
+                      <span className="neg">-{c.hours}h spare</span>
+                    </li>
+                  ))}
+                </ul>
+                {stats.nextTherapy != null && stats.commitments.some((c) => c.id === 'therapy') && (
+                  <p className="muted">Next therapy session: day {stats.nextTherapy}</p>
+                )}
+              </>
             )}
           </div>
         )}
