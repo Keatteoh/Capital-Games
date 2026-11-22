@@ -59,7 +59,10 @@ export const BIG_EXPENSES_AFTER = 20;
 
 export const DOWN_PAYMENT_GOAL = 10000;  // house listings appear once you have this much
 const HOUSE_LISTING_CHANCE = 0.5;        // per turn, while saving is done and you're house hunting
-export const INCOME_STREAMS_GOAL = 5;
+export const INCOME_STREAMS_GOAL = 7;
+
+// Side-quest cards are drawn less often than everyday cards (1 = same odds).
+const SIDE_QUEST_WEIGHT = 0.3;
 const THIS_YEAR = 2026;
 
 // ---------- Helpers ----------
@@ -595,11 +598,126 @@ export const DECISIONS = [
     right: { label: 'Not now', outcome: 'You will manage on your own for now.' },
   },
 
+  // --- Everyday life: small daily choices between jobs and side quests ---
+  {
+    id: 'team-lunch',
+    repeatable: true,
+    image: '🥗',
+    prompt: 'Coworkers are heading out for lunch. Join them for $15?',
+    when: (s) => hasJob(s),
+    left: {
+      label: 'Join',
+      effects: { wealth: -15 },
+      check: {
+        chance: () => 0.4,
+        success: { effects: { social: 1 }, outcome: 'Great conversation. You are getting closer with the team.' },
+        fail: { outcome: 'Nice lunch, mostly shop talk.' },
+      },
+    },
+    right: { label: 'Brown bag', outcome: 'Leftovers at your desk. Thrifty.' },
+  },
+  {
+    id: 'meal-prep',
+    repeatable: true,
+    image: '🍱',
+    prompt: 'Spend a couple of hours meal prepping, or just order takeout tonight?',
+    left: { label: 'Meal prep', busy: 2, effects: { wealth: -10, health: 1 }, outcome: 'Five lunches in the fridge for $10.' },
+    right: { label: 'Takeout', effects: { wealth: -25 }, outcome: 'Delicious, and $25 gone.' },
+  },
+  {
+    id: 'coffee-run',
+    repeatable: true,
+    image: '☕',
+    prompt: 'Grab a $6 latte on the way, or brew coffee at home?',
+    left: { label: 'Latte', effects: { wealth: -6 }, outcome: 'Oat milk, extra shot. Worth it.' },
+    right: { label: 'Brew at home', outcome: 'Not as fancy, but free.' },
+  },
+  {
+    id: 'sneaker-sale',
+    image: '👟',
+    prompt: 'The sneakers you have wanted are 40% off: $90. Buy them?',
+    left: { label: 'Buy', effects: { wealth: -90, social: 1 }, outcome: 'Fresh kicks. People noticed.' },
+    right: { label: 'Skip', outcome: 'Your old pair still works.' },
+  },
+  {
+    id: 'family-dinner',
+    repeatable: true,
+    image: '🍝',
+    prompt: 'Your family invites you over for dinner tonight.',
+    left: { label: 'Go', busy: 3, effects: { social: 1, wealth: 10 }, outcome: 'Good food, and they sent you home with leftovers.' },
+    right: { label: 'Too tired', outcome: 'You promised to come next time.' },
+  },
+  {
+    id: 'sell-clothes',
+    repeatable: true,
+    image: '👕',
+    prompt: 'Your closet is overflowing. List some old clothes online?',
+    left: { label: 'List them', busy: 2, pay: { min: 20, max: 60 }, outcome: 'A few pieces sold right away.' },
+    right: { label: 'Later', outcome: 'The pile can wait.' },
+  },
+  {
+    id: 'phone-plan',
+    image: '📶',
+    prompt: 'A cheaper phone plan would save you $10 a month. Spend an hour switching?',
+    left: {
+      label: 'Switch',
+      busy: 1,
+      recurring: [{ label: 'Phone plan savings', amount: 10, every: 'monthly' }],
+      outcome: 'Same coverage, lower bill.',
+    },
+    right: { label: 'Not worth it', outcome: 'You stayed on your old plan.' },
+  },
+  {
+    id: 'cover-shift',
+    repeatable: true,
+    image: '🧾',
+    prompt: 'A friend\'s café needs someone to cover a shift today. $70 cash.',
+    left: { label: 'Cover it', busy: 6, effects: { wealth: 70, social: 1 }, outcome: 'Busy shift, free pastries, and $70.' },
+    right: { label: 'Can\'t today', outcome: 'They found someone else.' },
+  },
+  {
+    id: 'spare-ticket',
+    image: '🎤',
+    prompt: 'A friend has a spare concert ticket tonight for $45.',
+    left: { label: 'Go', busy: 4, effects: { wealth: -45, social: 1, health: 2 }, outcome: 'Loud, sweaty and the best night in weeks.' },
+    right: { label: 'Pass', outcome: 'You watched clips online instead.' },
+  },
+  {
+    id: 'library-book',
+    repeatable: true,
+    image: '📕',
+    prompt: 'The library has a popular book on personal finance. Read it this week?',
+    when: (s) => !hasFlag(s, 'finance-book'),
+    left: { label: 'Read it', busy: 2, days: 3, effects: { skills: 1 }, setFlags: ['finance-book'], outcome: 'You finally get compound interest. +1 skill.' },
+    right: { label: 'Not now', outcome: 'You put it on hold for later.' },
+  },
+  {
+    id: 'coupons',
+    repeatable: true,
+    image: '🏷️',
+    prompt: 'Spend an hour stacking grocery coupons and store deals?',
+    left: { label: 'Clip away', busy: 1, effects: { wealth: 15 }, outcome: 'Saved $15 on groceries.' },
+    right: { label: 'Skip', outcome: 'Full price it is.' },
+  },
+  {
+    id: 'budget-app',
+    image: '📱',
+    prompt: 'Set up a budgeting app and track every dollar?',
+    left: {
+      label: 'Set it up',
+      busy: 2,
+      recurring: [{ label: 'Budgeting savings', amount: 5, every: 'weekly' }],
+      outcome: 'Turns out you spend a lot on snacks. Now you save $5 a week.',
+    },
+    right: { label: 'Not for me', outcome: 'You will keep it all in your head.' },
+  },
+
   // --- Side quests: hobbies that can grow into gigs, collectibles and income streams ---
 
   // Pottery → artisan markets → kiln upgrade → café wholesale stream
   {
     id: 'pottery-class',
+    sideQuest: true,
     kicker: '🗺️ Side quest',
     image: '🏺',
     prompt: 'A community studio runs a weekly pottery class for $60 a month. Sign up?',
@@ -617,6 +735,7 @@ export const DECISIONS = [
   },
   {
     id: 'artisan-market',
+    sideQuest: true,
     repeatable: true,
     kicker: '🏺 Pottery',
     image: '🛍️',
@@ -633,6 +752,7 @@ export const DECISIONS = [
   },
   {
     id: 'pottery-kiln',
+    sideQuest: true,
     kicker: '🏺 Pottery',
     image: '🔥',
     prompt: 'Buy your own kiln and glazes for $800? Better pieces sell for more.',
@@ -647,6 +767,7 @@ export const DECISIONS = [
   },
   {
     id: 'pottery-wholesale',
+    sideQuest: true,
     kicker: '💼 Opportunity',
     image: '☕',
     prompt: 'A café wants to stock your mugs every week. Take the order?',
@@ -666,6 +787,7 @@ export const DECISIONS = [
   // Trading cards → tournaments, rare pulls → hosting tournaments stream
   {
     id: 'tcg-hobby',
+    sideQuest: true,
     kicker: '🗺️ Side quest',
     image: '🃏',
     prompt: 'Friends play a trading card game every Thursday. Build a deck and join in?',
@@ -683,6 +805,7 @@ export const DECISIONS = [
   },
   {
     id: 'tcg-tournament',
+    sideQuest: true,
     repeatable: true,
     kicker: '🃏 Card game',
     image: '🏆',
@@ -703,6 +826,7 @@ export const DECISIONS = [
   },
   {
     id: 'tcg-host',
+    sideQuest: true,
     kicker: '💼 Opportunity',
     image: '🏪',
     prompt: 'The game shop asks you to host its weekly tournament for $40 a week. Do it?',
@@ -722,6 +846,7 @@ export const DECISIONS = [
   // Vinyl → DJ gigs → gear upgrade, weddings → bar residency stream
   {
     id: 'vinyl-hobby',
+    sideQuest: true,
     kicker: '🗺️ Side quest',
     image: '💿',
     prompt: 'Start collecting vinyl records? Crate digging is about $40 a month.',
@@ -739,6 +864,7 @@ export const DECISIONS = [
   },
   {
     id: 'dj-gig',
+    sideQuest: true,
     repeatable: true,
     kicker: '💿 Vinyl',
     image: '🎧',
@@ -754,6 +880,7 @@ export const DECISIONS = [
   },
   {
     id: 'dj-gear',
+    sideQuest: true,
     kicker: '💿 Vinyl',
     image: '🎛️',
     prompt: 'Upgrade to pro turntables and speakers for $1,200? Bigger gigs pay more.',
@@ -768,6 +895,7 @@ export const DECISIONS = [
   },
   {
     id: 'dj-residency',
+    sideQuest: true,
     kicker: '💼 Opportunity',
     image: '🍸',
     prompt: 'A cocktail bar offers you a Saturday residency for $150 a week. Take it?',
@@ -787,6 +915,7 @@ export const DECISIONS = [
   // Accounting → lower costs, bookkeeping gigs, a rare silent partnership
   {
     id: 'accounting-course',
+    sideQuest: true,
     kicker: '🗺️ Side quest',
     image: '🧮',
     prompt: 'Take a 6-week evening accounting course for $40 a week?',
@@ -805,6 +934,7 @@ export const DECISIONS = [
   },
   {
     id: 'bookkeeping-gig',
+    sideQuest: true,
     repeatable: true,
     kicker: '🧮 Accounting',
     image: '📒',
@@ -822,6 +952,7 @@ export const DECISIONS = [
   // Gardening → farmers market produce → restaurant herb deliveries stream; rare bonsai contest
   {
     id: 'garden-plot',
+    sideQuest: true,
     kicker: '🗺️ Side quest',
     image: '🌱',
     prompt: 'A community garden has a plot open for $15 a month. Start growing?',
@@ -839,6 +970,7 @@ export const DECISIONS = [
   },
   {
     id: 'garden-market',
+    sideQuest: true,
     repeatable: true,
     kicker: '🌱 Garden',
     image: '🥕',
@@ -854,6 +986,7 @@ export const DECISIONS = [
   },
   {
     id: 'herb-delivery',
+    sideQuest: true,
     kicker: '💼 Opportunity',
     image: '🌿',
     prompt: 'A restaurant chef wants fresh herbs from your plot every week for $50. Deal?',
@@ -873,6 +1006,7 @@ export const DECISIONS = [
   // Photography → event shoots → better lenses; rare magazine sale or limited print
   {
     id: 'photo-hobby',
+    sideQuest: true,
     kicker: '🗺️ Side quest',
     image: '📷',
     prompt: 'Buy a used camera for $300 and start taking photography seriously?',
@@ -891,6 +1025,7 @@ export const DECISIONS = [
   },
   {
     id: 'photo-gig',
+    sideQuest: true,
     repeatable: true,
     kicker: '📷 Photography',
     image: '📸',
@@ -905,6 +1040,7 @@ export const DECISIONS = [
   },
   {
     id: 'photo-lens',
+    sideQuest: true,
     kicker: '📷 Photography',
     image: '🔭',
     prompt: 'Buy a pro lens for $900? Sharper photos mean higher rates.',
@@ -921,6 +1057,7 @@ export const DECISIONS = [
   // Bike repair → flipping thrifted bikes → weekend repair stand stream; rare vintage frame
   {
     id: 'bike-repair',
+    sideQuest: true,
     kicker: '🗺️ Side quest',
     image: '🔧',
     prompt: 'Buy $150 of tools and learn to fix bikes in your free time?',
@@ -939,6 +1076,7 @@ export const DECISIONS = [
   },
   {
     id: 'bike-flip',
+    sideQuest: true,
     repeatable: true,
     kicker: '🔧 Bike repair',
     image: '🚲',
@@ -955,6 +1093,7 @@ export const DECISIONS = [
   },
   {
     id: 'bike-stand',
+    sideQuest: true,
     kicker: '💼 Opportunity',
     image: '🛠️',
     prompt: 'Open a weekend bike repair stand at the park? About $90 a week.',
@@ -2035,9 +2174,9 @@ export function houseCard(h) {
 
 const pick = (list, rng) => list[Math.floor(rng() * list.length)] ?? null;
 
-// Weighted pick; cards without a `weight` function count as 1.
+// Weighted pick; cards without a `weight` function count as 1 (side quests less).
 function pickWeighted(list, stats, rng) {
-  const weights = list.map((c) => (c.weight ? c.weight(stats) : 1));
+  const weights = list.map((c) => (c.weight ? c.weight(stats) : c.sideQuest ? SIDE_QUEST_WEIGHT : 1));
   let r = rng() * weights.reduce((a, b) => a + b, 0);
   for (let i = 0; i < list.length; i++) {
     r -= weights[i];
@@ -2074,7 +2213,7 @@ export function drawCard(stats, lastId = null, rng = Math.random) {
     if (event) return event.build ? { ...event, ...event.build(stats, rng) } : event;
   }
   const deck = eligible(DECISIONS);
-  if (deck.length) return pick(deck, rng);
+  if (deck.length) return pickWeighted(deck, stats, rng);
   // Only the last card is eligible: allow the repeat rather than ending the game.
   return DECISIONS.find((c) => c.id === lastId && (!c.when || c.when(stats))) ?? null;
 }
