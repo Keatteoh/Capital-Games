@@ -58,10 +58,13 @@ const THIS_YEAR = 2026;
 
 // ---------- Helpers ----------
 export const hasJob = (s) => s.flows.some((f) => f.kind === 'job');
+const jobIncome = (s) => s.flows.filter((f) => f.kind === 'job').reduce((sum, f) => sum + f.amount, 0);
 export const hasFlag = (s, flag) => s.flags.includes(flag);
 export const hasCommitment = (s, id) => s.commitments.some((c) => c.id === id);
 export const isUnderSlept = (s) => s.spareTime <= SLEEP_THRESHOLD;
 export const isHomeowner = (s) => s.house != null;
+// Days since a flag was set or a commitment started (-1 if never).
+export const daysSince = (s, key) => (s.since[key] == null ? -1 : s.day - s.since[key]);
 
 // An income stream is a recurring payment from a job, business, investment or side hustle.
 // (Allowance and savings like the bike commute don't count.)
@@ -162,6 +165,8 @@ export function createInitialStats() {
     queue: [],          // commitment ids waiting for a "keep or drop?" card (from therapy)
     nextTherapy: null,  // day the next therapy session is due
     house: null,        // the house you bought (see makeHouse)
+    items: [],          // collectibles you're holding: { id, label, image, value, since }
+    since: {},          // day each flag was set / commitment started, for side-quest timing
     eventPlan: planEvents(1), // { week, days }: which days this week get a surprise event
     usedCards: [],      // one-off cards already seen
     goalsDone: [],
@@ -211,6 +216,10 @@ export const currentGoal = (s) => GOALS.find((g) => !s.goalsDone.includes(g.id))
 //              { stat: 'social', chance(stats), success: result | [results], fail: result | [results] }
 //              A list of results picks one at random (each may have `when` and `weight`).
 //              A result can use any choice field plus `job` (start a job) and `raise` (0.15 = +15% pay).
+//   fire:      lose your job (its pay stops)
+//   pay:       a random one-off payment, { min, max } or a function of stats returning one
+//   item:      add a collectible, { label, image, value }; it may gain value each month
+//   sell:      sell the collectible with this id (pair with an effects payment)
 //   pauseIncome: no job or income-stream payments for the turn (costs still apply)
 //   commit:    start an ongoing commitment (hobby, club, pet) that uses spare time every week:
 //              { id, label, image, hours, cost: { amount, every }, gains: [{ stat, amount, every,
@@ -534,6 +543,230 @@ export const DECISIONS = [
     },
     right: { label: 'Not now', outcome: 'You will manage on your own for now.' },
   },
+
+  // --- Side quests: hobbies that can grow into gigs, collectibles and income streams ---
+
+  // Pottery → artisan markets → kiln upgrade → café wholesale stream
+  {
+    id: 'pottery-class',
+    kicker: '🗺️ Side quest',
+    image: '🏺',
+    prompt: 'A community studio runs a weekly pottery class for $60 a month. Sign up?',
+    left: {
+      label: 'Sign up',
+      commit: {
+        id: 'pottery', label: 'Pottery', image: '🏺', hours: 3,
+        cost: { amount: -60, every: 'monthly' },
+        gains: [{ stat: 'social', amount: 1, every: 'monthly' }],
+        keepPrompt: 'Keep going to pottery class?',
+      },
+      outcome: 'Your first bowl is lopsided, but it holds soup. In a few weeks you could sell your work.',
+    },
+    right: SKIP,
+  },
+  {
+    id: 'artisan-market',
+    repeatable: true,
+    kicker: '🏺 Pottery',
+    image: '🛍️',
+    prompt: 'The artisan market has a stall open this weekend. Sell your pottery there?',
+    when: (s) => hasCommitment(s, 'pottery') && daysSince(s, 'pottery') >= 21,
+    left: {
+      label: 'Sell',
+      days: 2,
+      pay: (s) => (hasFlag(s, 'kiln') ? { min: 200, max: 350 } : { min: 100, max: 200 }),
+      effects: { social: 1 },
+      outcome: 'Two long days at the stall, and most of your pieces went home with someone.',
+    },
+    right: { label: 'Not this time', outcome: 'You kept making pots instead.' },
+  },
+  {
+    id: 'pottery-kiln',
+    kicker: '🏺 Pottery',
+    image: '🔥',
+    prompt: 'Buy your own kiln and glazes for $800? Better pieces sell for more.',
+    when: (s) => hasCommitment(s, 'pottery') && daysSince(s, 'pottery') >= 30 && s.wealth >= 800,
+    left: {
+      label: 'Buy it',
+      effects: { wealth: -800, skills: 1 },
+      setFlags: ['kiln'],
+      outcome: 'Your glazes finally look like the photos. Market pieces now sell for $200–$350.',
+    },
+    right: { label: 'Not yet', outcome: 'The studio kiln will do for now.' },
+  },
+  {
+    id: 'pottery-wholesale',
+    kicker: '💼 Opportunity',
+    image: '☕',
+    prompt: 'A café wants to stock your mugs every week. Take the order?',
+    when: (s) => hasFlag(s, 'kiln') && hasCommitment(s, 'pottery') && !hasCommitment(s, 'mugs'),
+    left: {
+      label: 'Take it',
+      commit: {
+        id: 'mugs', label: 'Café mug orders', image: '☕', hours: 3,
+        gains: [{ stat: 'wealth', amount: 60, every: 'weekly', kind: 'income' }],
+        keepPrompt: 'Keep making mugs for the café?',
+      },
+      outcome: 'Your mugs are on the café shelf. +$60/wk.',
+    },
+    right: { label: 'Too busy', outcome: 'You passed on the order.' },
+  },
+
+  // Trading cards → tournaments, rare pulls → hosting tournaments stream
+  {
+    id: 'tcg-hobby',
+    kicker: '🗺️ Side quest',
+    image: '🃏',
+    prompt: 'Friends play a trading card game every Thursday. Build a deck and join in?',
+    left: {
+      label: 'Join',
+      commit: {
+        id: 'tcg', label: 'Card game', image: '🃏', hours: 3,
+        cost: { amount: -40, every: 'monthly' },
+        gains: [{ stat: 'social', amount: 1, every: 'monthly' }],
+        keepPrompt: 'Keep playing the card game?',
+      },
+      outcome: 'You lost every game, and loved it. Booster packs are $40 a month.',
+    },
+    right: SKIP,
+  },
+  {
+    id: 'tcg-tournament',
+    repeatable: true,
+    kicker: '🃏 Card game',
+    image: '🏆',
+    prompt: 'A regional tournament has a $500–$750 prize. Entry is $30. Play?',
+    when: (s) => hasCommitment(s, 'tcg') && daysSince(s, 'tcg') >= 14,
+    left: {
+      label: 'Play',
+      days: 2,
+      effects: { wealth: -30 },
+      check: {
+        stat: 'skills',
+        chance: (s) => clampChance(0.08 + 0.05 * s.skills + Math.min(0.15, daysSince(s, 'tcg') / 600)),
+        success: { pay: { min: 500, max: 750 }, effects: { social: 1 }, outcome: 'You took first place and the prize money!' },
+        fail: { outcome: 'Knocked out in round three. You will get them next time.' },
+      },
+    },
+    right: { label: 'Skip it', outcome: 'You stayed home and sorted your binder.' },
+  },
+  {
+    id: 'tcg-host',
+    kicker: '💼 Opportunity',
+    image: '🏪',
+    prompt: 'The game shop asks you to host its weekly tournament for $40 a week. Do it?',
+    when: (s) => hasCommitment(s, 'tcg') && daysSince(s, 'tcg') >= 45 && s.social >= 3 && !hasCommitment(s, 'tcg-host'),
+    left: {
+      label: 'Host',
+      commit: {
+        id: 'tcg-host', label: 'Tournament host', image: '🏪', hours: 2,
+        gains: [{ stat: 'wealth', amount: 40, every: 'weekly', kind: 'income' }],
+        keepPrompt: 'Keep hosting the weekly tournament?',
+      },
+      outcome: 'Thursday nights are now your show. +$40/wk.',
+    },
+    right: { label: 'Just play', outcome: 'You would rather play than run it.' },
+  },
+
+  // Vinyl → DJ gigs → gear upgrade, weddings → bar residency stream
+  {
+    id: 'vinyl-hobby',
+    kicker: '🗺️ Side quest',
+    image: '💿',
+    prompt: 'Start collecting vinyl records? Crate digging is about $40 a month.',
+    left: {
+      label: 'Start digging',
+      commit: {
+        id: 'vinyl', label: 'Vinyl collecting', image: '💿', hours: 2,
+        cost: { amount: -40, every: 'monthly' },
+        gains: [{ stat: 'social', amount: 1, every: 'monthly' }],
+        keepPrompt: 'Keep collecting records?',
+      },
+      outcome: 'The record shop regulars already know your name.',
+    },
+    right: SKIP,
+  },
+  {
+    id: 'dj-gig',
+    repeatable: true,
+    kicker: '💿 Vinyl',
+    image: '🎧',
+    prompt: 'A friend needs a DJ for their party on Saturday. Play a set?',
+    when: (s) => hasCommitment(s, 'vinyl') && daysSince(s, 'vinyl') >= 21,
+    left: {
+      label: 'Play',
+      pay: (s) => (hasFlag(s, 'dj-gear') ? { min: 250, max: 450 } : { min: 150, max: 300 }),
+      effects: { social: 1, health: -2 },
+      outcome: 'The dance floor never emptied. They paid you at the end of the night.',
+    },
+    right: { label: 'Pass', outcome: 'You had an early night instead.' },
+  },
+  {
+    id: 'dj-gear',
+    kicker: '💿 Vinyl',
+    image: '🎛️',
+    prompt: 'Upgrade to pro turntables and speakers for $1,200? Bigger gigs pay more.',
+    when: (s) => hasCommitment(s, 'vinyl') && daysSince(s, 'vinyl') >= 30 && s.wealth >= 1200,
+    left: {
+      label: 'Upgrade',
+      effects: { wealth: -1200, skills: 1 },
+      setFlags: ['dj-gear'],
+      outcome: 'Your sets sound huge now. Party gigs pay $250–$450, weddings pay more.',
+    },
+    right: { label: 'Not yet', outcome: 'Your starter setup will do for now.' },
+  },
+  {
+    id: 'dj-residency',
+    kicker: '💼 Opportunity',
+    image: '🍸',
+    prompt: 'A cocktail bar offers you a Saturday residency for $150 a week. Take it?',
+    when: (s) => hasFlag(s, 'dj-gear') && s.social >= 5 && !hasCommitment(s, 'residency'),
+    left: {
+      label: 'Take it',
+      commit: {
+        id: 'residency', label: 'DJ residency', image: '🍸', hours: 4,
+        gains: [{ stat: 'wealth', amount: 150, every: 'weekly', weekday: SAT, kind: 'income' }],
+        keepPrompt: 'Keep your Saturday DJ residency?',
+      },
+      outcome: 'Your name is on the chalkboard outside. +$150/wk.',
+    },
+    right: { label: 'Too late for me', outcome: 'You like your weekends free.' },
+  },
+
+  // Accounting → lower costs, bookkeeping gigs, a rare silent partnership
+  {
+    id: 'accounting-course',
+    kicker: '🗺️ Side quest',
+    image: '🧮',
+    prompt: 'Take a 6-week evening accounting course for $40 a week?',
+    left: {
+      label: 'Enroll',
+      effects: { skills: 1 },
+      recurring: [
+        { label: 'Accounting course', amount: -40, every: 'weekly', durationDays: 42 },
+        // Doing your own books and taxes once you finish.
+        { label: 'Doing your own books', amount: 25, every: 'monthly', afterDays: 42 },
+      ],
+      setFlags: ['accounting'],
+      outcome: 'Spreadsheets, ledgers and tax law. In 6 weeks you can do your own books, and other people\'s.',
+    },
+    right: SKIP,
+  },
+  {
+    id: 'bookkeeping-gig',
+    repeatable: true,
+    kicker: '🧮 Accounting',
+    image: '📒',
+    prompt: 'A local shop needs its books sorted out before tax season. Take the job?',
+    when: (s) => hasFlag(s, 'accounting') && daysSince(s, 'accounting') >= 42,
+    left: {
+      label: 'Take it',
+      days: 2,
+      pay: { min: 200, max: 400 },
+      outcome: 'Two days of receipts and spreadsheets. The owner paid you on the spot.',
+    },
+    right: { label: 'Pass', outcome: 'You were too busy this time.' },
+  },
 ];
 
 // Monthly therapy session: drawn automatically when it's due.
@@ -733,6 +966,29 @@ export const EVENTS = [
       label: 'Skip',
       effects: { social: -1 },
       outcome: 'You sent a text instead.',
+    },
+  },
+  {
+    id: 'layoffs',
+    // Low social = likelier to be the one let go. Social 0: 2.5×, 3: 1×, 5+: rare.
+    weight: (s) => Math.max(0.1, 2.5 - 0.5 * s.social),
+    image: '📦',
+    prompt: 'Layoffs at work. Your manager calls you in and says your role is being cut.',
+    when: (s) => hasJob(s),
+    left: {
+      label: 'Make your case',
+      check: {
+        stat: 'social',
+        chance: (s) => socialOdds(0.1, s),
+        success: { outcome: 'Your coworkers vouched for you. You keep your job.' },
+        fail: { fire: true, outcome: 'It did not change their mind. You are out of a job.' },
+      },
+    },
+    right: {
+      label: 'Take severance',
+      fire: true,
+      effects: (s) => ({ wealth: 2 * jobIncome(s) }),
+      outcome: 'You walked out with two weeks of pay as severance.',
     },
   },
   {
@@ -1241,6 +1497,106 @@ export const EVENTS = [
       outcome: 'A cheap patch for now. The damp keeps costing you.',
     },
   },
+
+  // --- Side-quest moments: rare finds, big gigs, collector offers ---
+  {
+    id: 'sculpture-buyer',
+    weight: () => 0.4,
+    kicker: '🏺 Pottery',
+    image: '🗿',
+    prompt: 'A gallery owner loves one of your sculptures and offers $500 for it.',
+    when: (s) => hasCommitment(s, 'pottery') && daysSince(s, 'pottery') >= 21,
+    left: { label: 'Sell', effects: { wealth: 500 }, outcome: 'Sold! Your first piece in a gallery.' },
+    right: {
+      label: 'Keep it',
+      item: { label: 'Sculpture', image: '🗿', value: 500 },
+      outcome: 'You kept it. As your name grows, it could be worth more.',
+    },
+  },
+  {
+    id: 'rare-card',
+    weight: () => 0.4,
+    kicker: '🃏 Card game',
+    image: '✨',
+    prompt: 'You opened a rare holo card in a booster pack! It is worth about $600.',
+    when: (s) => hasCommitment(s, 'tcg'),
+    left: { label: 'Sell', effects: { wealth: 600 }, outcome: 'A collector paid $600 the same day.' },
+    right: {
+      label: 'Keep it',
+      item: { label: 'Rare holo card', image: '✨', value: 600 },
+      outcome: 'Into a hard case it goes. Card prices tend to climb.',
+    },
+  },
+  {
+    id: 'wedding-dj',
+    weight: () => 0.5,
+    kicker: '💿 Vinyl',
+    image: '💒',
+    prompt: 'A couple wants you to DJ their wedding reception. It pays $1,000.',
+    when: (s) => hasCommitment(s, 'vinyl') && daysSince(s, 'vinyl') >= 45,
+    left: {
+      label: 'Pitch them',
+      check: {
+        stat: 'social',
+        chance: (s) => socialOdds(hasFlag(s, 'dj-gear') ? 0.35 : 0.15, s),
+        success: {
+          pay: (s) => (hasFlag(s, 'dj-gear') ? { min: 1200, max: 1400 } : { min: 1000, max: 1000 }),
+          effects: { social: 2, health: -3 },
+          outcome: 'They booked you. A long night, a packed floor and a big check.',
+        },
+        fail: { outcome: 'They went with a DJ who had more wedding reviews.' },
+      },
+    },
+    right: { label: 'Not my scene', outcome: 'Weddings are not for you.' },
+  },
+  {
+    id: 'silent-partner',
+    once: true,
+    weight: () => 0.3,
+    kicker: '🧮 Accounting',
+    image: '🥐',
+    when: (s) => hasFlag(s, 'accounting') && daysSince(s, 'accounting') >= 42,
+    // The size of the stake is picked when the card is drawn.
+    build: (s, rng) => {
+      const share = 300 + Math.floor(rng() * 21) * 10; // $300–$500 a week
+      return {
+        prompt: `A family bakery is drowning in debt. Spend a week fixing their books for a silent-partner stake worth about $${share}/wk?`,
+        left: {
+          label: 'Help them',
+          days: 7,
+          check: {
+            stat: 'skills',
+            chance: (st) => clampChance(0.3 + 0.06 * st.skills),
+            success: {
+              recurring: [{ label: 'Bakery partnership', amount: share, every: 'weekly', kind: 'income', afterDays: 14 }],
+              setFlags: ['silent-partner'],
+              outcome: `You turned the bakery around. As a silent partner you get $${share}/wk, starting in two weeks.`,
+            },
+            fail: { outcome: 'You tried, but the bakery closed anyway. At least they thanked you.' },
+          },
+        },
+        right: { label: 'Too risky', outcome: 'You wished them luck.' },
+      };
+    },
+  },
+  {
+    id: 'collector-offer',
+    weight: () => 0.8,
+    kicker: '💰 Offer',
+    image: '🧐',
+    when: (s) => s.items.length > 0,
+    // Picks one of your collectibles and an offer around its current value.
+    build: (s, rng) => {
+      const item = s.items[Math.floor(rng() * s.items.length)];
+      const offer = Math.round((item.value * (0.9 + rng() * 0.3)) / 10) * 10;
+      return {
+        image: item.image,
+        prompt: `A collector offers ${money(offer)} for your ${item.label.toLowerCase()}. It is valued around ${money(item.value)}.`,
+        left: { label: 'Sell', effects: { wealth: offer }, sell: item.id, outcome: `Sold your ${item.label.toLowerCase()} for ${money(offer)}.` },
+        right: { label: 'Hold', outcome: 'You are holding out for more.' },
+      };
+    },
+  },
 ].map((e) => ({ ...e, event: true, repeatable: !e.once }));
 
 // Repairs mostly hit old houses that inspected poorly.
@@ -1393,7 +1749,8 @@ export function drawCard(stats, lastId = null, rng = Math.random) {
   // A planned day that a multi-day card skipped over still fires, on the next swipe that week.
   if (stats.eventPlan.days.some((d) => d <= stats.day)) {
     const event = pickWeighted(eligible(EVENTS), stats, rng);
-    if (event) return event;
+    // Some events fill in details when drawn (which item, how much).
+    if (event) return event.build ? { ...event, ...event.build(stats, rng) } : event;
   }
   const deck = eligible(DECISIONS);
   if (deck.length) return pick(deck, rng);
@@ -1460,8 +1817,11 @@ function addEffects(stats, effects = {}) {
   }
 }
 
+let itemId = 0;
+
 function startCommitment(next, c) {
   if (next.commitments.some((x) => x.id === c.id)) return;
+  next.since[c.id] = next.day;
   next.commitments.push({
     id: c.id, label: c.label, image: c.image, hours: c.hours,
     keepPrompt: c.keepPrompt, dropLabel: c.dropLabel, dropOutcome: c.dropOutcome,
@@ -1483,8 +1843,17 @@ function dropCommitment(next, id) {
 
 // Applies a choice, or one result of a check. `before` is the stats before the
 // turn, used for anything that scales with stats (pay, effects functions).
-function applyResult(next, result, before, ledger) {
+function applyResult(next, result, before, ledger, rng = Math.random) {
   if (!result) return;
+  const pay = resolve(result.pay, before);
+  if (pay) {
+    const amount = pay.min + Math.floor(rng() * ((pay.max - pay.min) / 10 + 1)) * 10;
+    next.wealth += amount;
+    ledger['One-time'] = (ledger['One-time'] ?? 0) + amount;
+  }
+  if (result.item) next.items.push({ id: ++itemId, ...result.item, since: next.day });
+  if (result.sell) next.items = next.items.filter((i) => i.id !== result.sell);
+  for (const flag of result.setFlags ?? []) if (next.since[flag] == null) next.since[flag] = next.day;
   const effects = resolve(result.effects, before);
   addEffects(next, effects);
   if (effects?.wealth) ledger['One-time'] = (ledger['One-time'] ?? 0) + effects.wealth;
@@ -1494,6 +1863,7 @@ function applyResult(next, result, before, ledger) {
     const job = { weekday: PAYDAY, ...result.job, amount: jobPay(result.job, before), kind: 'job' };
     next.flows.push(makeFlow(job, next.day + (result.startsIn ?? 0)));
   }
+  if (result.fire) next.flows = next.flows.filter((f) => f.kind !== 'job');
   if (result.raise) {
     next.flows = next.flows.map((f) =>
       f.kind === 'job' ? { ...f, amount: Math.round(f.amount * (1 + result.raise)) } : f);
@@ -1520,6 +1890,8 @@ export function applyChoice(stats, card, side, rng = Math.random) {
     flows: [...stats.flows],
     flags: [...stats.flags],
     commitments: [...stats.commitments],
+    items: [...stats.items],
+    since: { ...stats.since },
     queue: card.queued ? stats.queue.slice(1) : [...stats.queue],
     usedCards: card.repeatable ? stats.usedCards : [...stats.usedCards, card.id],
     goalsDone: [...stats.goalsDone],
@@ -1529,7 +1901,7 @@ export function applyChoice(stats, card, side, rng = Math.random) {
   const gains = {};  // stat changes from commitments this turn: { label: { social: 1 } }
   let outcome = choice.outcome ?? '';
 
-  applyResult(next, choice, stats, ledger);
+  applyResult(next, choice, stats, ledger, rng);
 
   const days = choice.days ?? card.days ?? DEFAULT_DAYS_PER_TURN;
 
@@ -1537,19 +1909,24 @@ export function applyChoice(stats, card, side, rng = Math.random) {
     const hired = rng() < jobChance(choice.apply, stats);
     // The job starts once the application wait is over, so no pay during it.
     const job = { job: choice.apply.job, effects: choice.apply.effects, startsIn: days };
-    if (hired) applyResult(next, job, stats, ledger);
+    if (hired) applyResult(next, job, stats, ledger, rng);
     outcome = hired ? choice.apply.success : choice.apply.fail;
   }
 
   if (choice.check) {
     const passed = rng() < choiceChance(choice, stats);
     const result = pickResult(passed ? choice.check.success : choice.check.fail, stats, rng);
-    applyResult(next, result, stats, ledger);
+    applyResult(next, result, stats, ledger, rng);
     const label = choice.check.stat ? `${STAT_META[choice.check.stat].label} check` : 'Roll';
     outcome = `${passed ? '✅' : '❌'} ${label} ${passed ? 'passed' : 'failed'}. ${result?.outcome ?? ''}`;
   }
 
   for (let d = next.day; d < next.day + days; d++) {
+    // Collectibles: each month held, value moves -5%…+15% (usually up).
+    next.items = next.items.map((it) =>
+      d > it.since && (d - it.since) % 30 === 0
+        ? { ...it, value: Math.round(it.value * (0.95 + rng() * 0.2)) }
+        : it);
     for (const flow of next.flows) {
       if (!isDue(flow, d)) continue;
       if (flow.chance != null && rng() >= flow.chance) continue;

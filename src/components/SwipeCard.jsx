@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { STAT_META, WEEKDAYS, PAYDAY, dayOfWeek, formatDelta, formatFlow, jobChance, jobPay, choiceChance, resolve } from '../decisions.js';
+import { STAT_META, money, WEEKDAYS, PAYDAY, dayOfWeek, formatDelta, formatFlow, jobChance, jobPay, choiceChance, resolve } from '../decisions.js';
 
 const SWIPE_THRESHOLD = 90; // px of drag needed to commit a choice
 const DRAG_START = 8;       // px of movement before a touch counts as a drag (vs a tap)
@@ -9,6 +9,7 @@ const statName = (key) => STAT_META[key]?.label.toLowerCase();
 function Effects({ choice, stats }) {
   const { apply, check, commit } = choice;
   const effects = resolve(choice.effects, stats) ?? {};
+  const pay = resolve(choice.pay, stats);
   const pct = (p) => `${Math.round(p * 100)}%`;
   return (
     <ul className="effects">
@@ -25,6 +26,12 @@ function Effects({ choice, stats }) {
       )}
       {choice.days && <li>⏳ {choice.days} days</li>}
       {choice.pauseIncome && <li className="neg">⏸️ No income for 1 week</li>}
+      {pay && (
+        <li className="pos">
+          +{money(pay.min)}{pay.max !== pay.min && `–${money(pay.max)}`} once
+        </li>
+      )}
+      {choice.item && <li className="pos">{choice.item.image} Keep: worth ~{money(choice.item.value)}, may rise</li>}
       {(choice.recurring ?? []).map((flow) => (
         <li key={flow.label} className={flow.amount >= 0 ? 'pos' : 'neg'}>
           {formatFlow(flow)}

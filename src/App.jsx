@@ -152,8 +152,20 @@ function Intro({ stats, onStart }) {
           <span>Weekly income</span>
           <b className={`num ${net >= 0 ? 'pos' : 'neg'}`}>{net >= 0 ? '+' : ''}{money(net)}/wk</b>
         </li>
-        <li><span>Social</span><b className="num">{stats.social}</b></li>
-        <li><span>Skills</span><b className="num">{stats.skills}</b></li>
+        <li>
+          <span>
+            Social
+            <small className="intro-note">Better odds in social and job situations, and less likely to be laid off</small>
+          </span>
+          <b className="num">{stats.social}</b>
+        </li>
+        <li>
+          <span>
+            Skills
+            <small className="intro-note">Unlocks higher-paying jobs and one-off gigs, and raises your pay</small>
+          </span>
+          <b className="num">{stats.skills}</b>
+        </li>
       </ul>
 
       <h3>Goals</h3>
@@ -274,6 +286,19 @@ export default function App() {
                   </li>
                 ))}
               </ul>
+            )}
+            {stats.items.length > 0 && (
+              <>
+                <h3>Collection</h3>
+                <ul>
+                  {stats.items.map((it) => (
+                    <li key={it.id}>
+                      <span>{it.image} {it.label}</span>
+                      <span className="pos">~{money(it.value)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
             )}
             {stats.commitments.length > 0 && (
               <>
