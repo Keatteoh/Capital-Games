@@ -29,16 +29,22 @@ function planEvents(day, rng = Math.random) {
   return { week, days };
 }
 
-// Time: free hours each day, after sleep and chores. Jobs take hours on workdays
-// (Mon–Fri); each commitment takes its hours on one day of the week.
-export const FREE_HOURS_PER_DAY = 10;
+// Time: a day has 24 hours. Essentials (meals, chores, getting around) take 8,
+// leaving 16 available. Jobs take hours on workdays (Mon–Fri) and commitments on
+// their own schedule. Whatever is left is for sleep: under 8 hours is the health
+// hazard zone, and each hour short costs more.
+export const HOURS_PER_DAY = 24;
+export const ESSENTIAL_HOURS = 8;
+export const SLEEP_HOURS = 8;
 const WORKDAYS = [0, 1, 2, 3, 4];
-// A day with SLEEP_THRESHOLD free hours or fewer means you're overcommitted: too
-// many jobs and hobbies eat into sleep and friendships.
-export const SLEEP_THRESHOLD = 1;
 export const LOW_HEALTH = 50;            // below this: more medical events, worse job odds
-export const HEALTH_LOSS_PER_OVERCOMMITTED_DAY = 5;
+export const HEALTH_LOSS_PER_OVERCOMMITTED_DAY = 5; // the first hour of lost sleep
+const HEALTH_LOSS_PER_EXTRA_SLEEP_HOUR = 2;         // each hour short after that
 const SOCIAL_LOSS_PER_OVERCOMMITTED_DAY = 1;
+// Health lost on a day with `free` hours left (0 if you get your 8 hours).
+export const sleepPenalty = (free) =>
+  free >= SLEEP_HOURS ? 0
+    : HEALTH_LOSS_PER_OVERCOMMITTED_DAY + HEALTH_LOSS_PER_EXTRA_SLEEP_HOUR * Math.ceil(SLEEP_HOURS - free - 1);
 // Stretched thin: this many overcommitted days within a week prompts a check-in
 // on every commitment (keep or drop), at most once per CHECKIN_COOLDOWN days.
 const STRETCHED_DAYS = 3;
@@ -136,17 +142,21 @@ export function scheduleText(c) {
 const timesPerWeek = (c) => (c.every && c.every !== 7 ? 7 / c.every : c.weekdays.length);
 // Free hours on `day`, minus any hours a card keeps you busy (`busy`).
 export const freeHours = (s, day = s.day, busy = 0) =>
-  FREE_HOURS_PER_DAY - jobHoursOn(s, day) - commitmentHoursOn(s, day) - busy;
-export const isUnderSlept = (s) => freeHours(s) <= SLEEP_THRESHOLD;
+  HOURS_PER_DAY - ESSENTIAL_HOURS - jobHoursOn(s, day) - commitmentHoursOn(s, day) - busy;
+// Short on sleep today: fewer than 8 hours left.
+export const isUnderSlept = (s) => freeHours(s) < SLEEP_HOURS;
 
-// Warns before a choice overcommits you. Returns { days, ongoing }:
-//   days:    how many days of this turn would be overcommitted
+// Warns before a choice overcommits you. Returns { days, health, sleep, ongoing }:
+//   days:    how many days of this turn would be short on sleep
+//   health:  the health those days would cost
+//   sleep:   the fewest hours of sleep on those days
 //   ongoing: true if a new commitment or job would overcommit the days it lands on
 export function overcommitPreview(s, card, choice) {
   const length = choice.days ?? card.days ?? DEFAULT_DAYS_PER_TURN;
-  let days = 0;
+  let days = 0, health = 0, sleep = SLEEP_HOURS;
   for (let d = s.day; d < s.day + length; d++) {
-    if (freeHours(s, d, choice.busy ?? 0) <= SLEEP_THRESHOLD) days++;
+    const free = freeHours(s, d, choice.busy ?? 0);
+    if (free < SLEEP_HOURS) { days++; health += sleepPenalty(free); sleep = Math.min(sleep, Math.max(0, free)); }
   }
   let ongoing = false;
   if (choice.commit) {
@@ -154,7 +164,7 @@ export function overcommitPreview(s, card, choice) {
     const plan = planCommitment(choice.commit, s);
     const monday = Math.floor((s.day - 1) / 7) * 7 + 8;
     for (let d = monday; d < monday + 28 && !ongoing; d++) {
-      if (commitmentOn(plan, d) && freeHours(s, d) - choice.commit.hours <= SLEEP_THRESHOLD) ongoing = true;
+      if (commitmentOn(plan, d) && freeHours(s, d) - choice.commit.hours < SLEEP_HOURS) ongoing = true;
     }
   }
   // A new job's hours on top of your routines (checked over the first month of work).
@@ -162,10 +172,10 @@ export function overcommitPreview(s, card, choice) {
   if (jobHours) {
     const start = s.day + length;
     for (let d = start; d < start + 28 && !ongoing; d++) {
-      if (WORKDAYS.includes(dayOfWeek(d)) && freeHours(s, d) - jobHours <= SLEEP_THRESHOLD) ongoing = true;
+      if (WORKDAYS.includes(dayOfWeek(d)) && freeHours(s, d) - jobHours < SLEEP_HOURS) ongoing = true;
     }
   }
-  return { days, ongoing };
+  return { days, health, sleep, ongoing };
 }
 
 // Which weekday a new commitment lands on: its own `weekday` if set, otherwise
@@ -175,7 +185,7 @@ export function commitmentDays(c, s) {
   if (c.weekdays) return c.weekdays;
   if (c.weekday != null) return [c.weekday];
   const week = Math.floor((s.day - 1) / 7) * 7 + 1; // Monday of this week
-  const load = (wd) => FREE_HOURS_PER_DAY - freeHours(s, week + wd + 7);
+  const load = (wd) => jobHoursOn(s, week + wd + 7) + commitmentHoursOn(s, week + wd + 7);
   const shift = [...c.id].reduce((h, ch) => h + ch.charCodeAt(0), 0) % 5;
   const order = [0, 1, 2, 3, 4].map((i) => (i + shift) % 5);
   return [order.reduce((best, wd) => (load(wd) < load(best) ? wd : best), order[0])];
@@ -208,7 +218,7 @@ export const committedHoursPerWeek = (s) =>
 export function timeBreakdown(s, day = s.day) {
   const job = jobHoursOn(s, day);
   const commit = commitmentHoursOn(s, day);
-  return { job, commit, free: FREE_HOURS_PER_DAY - job - commit };
+  return { essentials: ESSENTIAL_HOURS, job, commit, free: HOURS_PER_DAY - ESSENTIAL_HOURS - job - commit };
 }
 
 // How a choice changes your time, before you make it. Returns { hours, text } or null.
@@ -234,13 +244,14 @@ export function timePreview(s, card, choice) {
     hours -= choice.apply.job.hours;
     parts.push(`-${choice.apply.job.hours}h a day if hired`);
   }
-  return parts.length ? { hours, text: parts.join(' · ') } : null;
+  // today: hours this choice takes (or frees) today, for the sleep forecast
+  return parts.length ? { hours, today: -(choice.busy ?? 0), text: parts.join(' · ') } : null;
 }
 
 // Health a choice costs or gives right away (its effects plus any overcommitted days).
 export function healthPreview(s, card, choice) {
   const fx = resolve(choice.effects, s) ?? {};
-  const over = overcommitPreview(s, card, choice).days * HEALTH_LOSS_PER_OVERCOMMITTED_DAY;
+  const over = overcommitPreview(s, card, choice).health;
   return (fx.health ?? 0) - over;
 }
 // Days since a flag was set or a commitment started (-1 if never).
@@ -2990,19 +3001,21 @@ export function applyChoice(stats, card, side, rng = Math.random) {
       }
     }
 
-    // Day by day: an overcommitted day costs health and social; a day in debt
-    // slowly drains health; a rested, debt-free day slowly recovers it.
+    // Day by day: a day short on sleep costs health (more for each hour short)
+    // and social; a day in debt slowly drains health; a rested, debt-free day
+    // slowly recovers it.
     let rate = 0; // per week
-    const overcommitted = freeHours(next, d, busy) <= SLEEP_THRESHOLD;
+    const free = freeHours(next, d, busy);
+    const overcommitted = free < SLEEP_HOURS;
     if (overcommitted) {
-      next.health -= HEALTH_LOSS_PER_OVERCOMMITTED_DAY;
+      next.health -= sleepPenalty(free);
       const lost = SOCIAL_LOSS_PER_OVERCOMMITTED_DAY; // social can go below zero
       next.social -= lost;
       if (lost) {
-        gains.Overcommitted = gains.Overcommitted ?? {};
-        gains.Overcommitted.social = (gains.Overcommitted.social ?? 0) - lost;
+        gains['Short on sleep'] = gains['Short on sleep'] ?? {};
+        gains['Short on sleep'].social = (gains['Short on sleep'].social ?? 0) - lost;
       }
-      healthCauses.add('😴 Overcommitted');
+      healthCauses.add('😴 Short on sleep');
       next.overDays = [...(next.overDays ?? []).filter((x) => x > d - 7), d];
     }
     if (next.wealth < 0) { rate -= DEBT_HEALTH_LOSS_PER_WEEK; healthCauses.add('💳 In debt'); }

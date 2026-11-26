@@ -23,6 +23,10 @@ import {
   WEEKDAYS,
   dayOfWeek,
   isUnderSlept,
+  freeHours,
+  sleepPenalty,
+  HOURS_PER_DAY,
+  SLEEP_HOURS,
   createInitialStats,
   currentGoal,
   drawCard,
@@ -78,34 +82,63 @@ function Meter({ label, value, display, max, tone, preview, float }) {
   );
 }
 
-// Today's hours, one segment each: free time first, then commitments and job.
-// A choice being considered blinks the hours it would spend (or free up).
-function TimeMeter({ stats, preview, float }) {
-  const { job, commit, free } = timeBreakdown(stats);
-  const left = Math.max(0, free);
-  const change = preview ? Math.min(10, Math.abs(preview.hours)) : 0;
+// Today as 24 one-hour cells: essentials, job, plans, free time, then the last
+// 8 hours for sleep. Hours that spill into the sleep zone turn red. A choice
+// being considered blinks the hours it would take (or free up).
+function DayBar({ stats, preview, float }) {
+  const { essentials, job, commit, free } = timeBreakdown(stats);
+  const used = Math.min(HOURS_PER_DAY, essentials + job + commit);
+  const awake = HOURS_PER_DAY - SLEEP_HOURS; // where the sleep zone starts
+  const change = preview ? -preview.hours : 0; // + takes hours, - frees them
+  const after = Math.max(essentials, Math.min(HOURS_PER_DAY, used + change));
   const cls = (i) => {
-    if (i < left) return preview?.hours < 0 && i >= left - change ? 'on cost' : 'on';
-    if (preview?.hours > 0 && i < left + change) return 'gain';
-    if (i < left + commit) return 'commit';
-    if (i < left + commit + job) return 'job';
-    return 'job';
+    let c = i < essentials ? 'ess' : i < essentials + job ? 'job' : i < used ? 'commit' : i < awake ? 'free' : 'sleep';
+    if (i < used && i >= awake) c += ' hazard';
+    if (change > 0 && i >= used && i < after) c = `cost${i >= awake ? ' hazard' : ''}`;
+    if (change < 0 && i >= after && i < used) c += ' gain';
+    return c;
   };
+  const freeAfter = preview ? free + preview.today : free;
+  const short = free < SLEEP_HOURS;
   return (
-    <div className={`meter meter-time ${free <= 1 ? 'meter-bad' : ''}`}>
+    <div className={`daybar ${short ? 'daybar-bad' : ''}`}>
       <Float float={float} />
-      {preview ? <span className={`meter-tip ${preview.hours < 0 ? 'neg' : 'pos'}`}>{preview.text}</span> : null}
+      {preview ? (
+        <span className={`meter-tip ${preview.hours < 0 ? 'neg' : 'pos'}`}>
+          {preview.text}
+          {freeAfter < SLEEP_HOURS && preview.today < 0 ? ` → ${Math.max(0, freeAfter)}h sleep, -${sleepPenalty(freeAfter)} health` : ''}
+        </span>
+      ) : null}
       <div className="meter-row">
         <span>Daytime: {WEEKDAYS[dayOfWeek(stats.day)]}</span>
-        <b className="num">{left}h</b>
+        <b className="num">
+          {short ? `⚠️ ${Math.max(0, free)}h left for sleep · -${sleepPenalty(free)} health` : `${free}h available`}
+        </b>
       </div>
-      <div className="seg" aria-hidden="true">
-        {Array.from({ length: 10 }, (_, i) => <i key={i} className={cls(i)} />)}
+      <div className="day-seg" aria-hidden="true">
+        {Array.from({ length: HOURS_PER_DAY }, (_, i) => <i key={i} className={cls(i)} />)}
       </div>
       <div className="time-key" aria-hidden="true">
+        <span className="k-ess">essentials {essentials}h</span>
         {job > 0 && <span className="k-job">job {job}h</span>}
         {commit > 0 && <span className="k-commit">plans {commit}h</span>}
+        <span className="k-free">free</span>
+        <span className="k-sleep">sleep {SLEEP_HOURS}h</span>
       </div>
+    </div>
+  );
+}
+
+// Short on sleep today: how many hours you'll get and what it costs.
+function SleepBar({ free }) {
+  const sleep = Math.max(0, free);
+  return (
+    <div className="debt sleepbar" role="alert">
+      <div className="debt-top">
+        <span>😴 Short on sleep: {sleep}h of {SLEEP_HOURS}h tonight</span>
+        <b>-{sleepPenalty(free)} health, -1 social</b>
+      </div>
+      <div className="debt-track"><i style={{ width: `${((SLEEP_HOURS - sleep) / SLEEP_HOURS) * 100}%` }} /></div>
     </div>
   );
 }
@@ -291,7 +324,7 @@ function newGame() {
       ledger: { 'Allowance from parents': 3, 'Cost of living': -20, 'Gym membership': -20 },
       goalMsg: '',
       healthDelta: -15,
-      healthCauses: ['😴 Overcommitted', '💳 In debt'],
+      healthCauses: ['😴 Short on sleep', '💳 In debt'],
       floats: {
         time: { text: '-3h/wk', tone: 'neg', key: 1 },
         health: { text: '-15', tone: 'neg', key: 1 },
@@ -449,6 +482,7 @@ export default function App() {
 
       {playing && (
         <div className="status-strip">
+          {underSlept && <SleepBar free={freeHours(stats)} />}
           {inDebt && <DebtBar wealth={stats.wealth} />}
           {stats.rental?.behind > 0 && <RentBar rental={stats.rental} />}
           {goal && (
@@ -457,7 +491,7 @@ export default function App() {
               <span className="quest-title">{goal.title}</span>
               {goal.progress && <span className="quest-progress num">{goal.progress(stats)}</span>}
               {underSlept ? (
-                <span className="quest-sleep" role="alert">😴 Overcommitted{lowHealth ? ' · health low' : ''}</span>
+                <span className="quest-sleep">😴 Short on sleep{lowHealth ? ' · health low' : ''}</span>
               ) : (
                 <span className="quest-more">{showHint ? '▴' : 'ⓘ'}</span>
               )}
@@ -506,6 +540,7 @@ export default function App() {
       </main>
 
       <footer className="vitals">
+        <DayBar stats={stats} preview={timePrev} float={floats.time} />
         <Meter label="Social" value={stats.social} display={STAT_META.social.format(stats.social)} max={10}
           tone={stats.social < 0 ? 'bad' : null} float={floats.social} />
         <Meter label="Skills" value={stats.skills} display={STAT_META.skills.format(stats.skills)} max={10} float={floats.skills} />
@@ -518,7 +553,6 @@ export default function App() {
           preview={healthPrev}
           float={floats.health}
         />
-        <TimeMeter stats={stats} preview={timePrev} float={floats.time} />
       </footer>
     </div>
   );

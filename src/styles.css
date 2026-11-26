@@ -580,3 +580,27 @@ button.cell:active { background: var(--panel-2); }
 @keyframes float-fade { 0%, 75% { opacity: 1; } 100% { opacity: 0; } }
 .meter-time .meter-row span { white-space: nowrap; letter-spacing: 0.02em; font-size: 10px; }
 .meter-time .meter-row { gap: 4px; }
+
+/* ---------- Day bar: 24 hours, with the sleep zone at the end ---------- */
+.vitals { grid-template-columns: repeat(3, 1fr); }
+.daybar { grid-column: 1 / -1; position: relative; }
+.daybar .meter-row b { font-size: 12px; }
+.daybar-bad .meter-row b { color: var(--danger); }
+.day-seg { display: grid; grid-template-columns: repeat(24, 1fr); gap: 2px; margin-top: 3px; position: relative; }
+.day-seg i { height: 10px; border-radius: 2px; background: #224a3e; }
+.day-seg i.ess { background: #5f7d72; }
+.day-seg i.job { background: #6fb7ff; }
+.day-seg i.commit { background: var(--sleep); }
+.day-seg i.free { background: var(--lime); }
+.day-seg i.sleep { background: #2b3f8a; }
+.day-seg i:nth-child(17) { box-shadow: -3px 0 0 -1px var(--fg); } /* where sleep starts */
+.day-seg i.hazard { background: var(--danger) !important; }
+.day-seg i.cost { background: var(--warn); animation: seg-blink 0.7s steps(2, jump-none) infinite; }
+.day-seg i.cost.hazard { background: var(--danger) !important; }
+.day-seg i.gain { animation: seg-blink 0.7s steps(2, jump-none) infinite; }
+.time-key { flex-wrap: wrap; gap: 4px 8px; font-size: 10px; }
+.k-ess::before { background: #5f7d72; }
+.k-free::before { background: var(--lime); }
+.k-sleep::before { background: #2b3f8a; }
+.debt.sleepbar .debt-track i { background: var(--sleep); }
+@media (prefers-reduced-motion: reduce) { .day-seg i.cost, .day-seg i.gain { animation: none; } }
