@@ -578,3 +578,5 @@ button.cell:active { background: var(--panel-2); }
   .seg i.cost, .seg i.gain { animation: none; }
 }
 @keyframes float-fade { 0%, 75% { opacity: 1; } 100% { opacity: 0; } }
+.meter-time .meter-row span { white-space: nowrap; letter-spacing: 0.02em; font-size: 10px; }
+.meter-time .meter-row { gap: 4px; }

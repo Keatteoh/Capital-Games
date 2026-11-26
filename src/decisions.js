@@ -1,8 +1,8 @@
 const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 
 // ---------- Tuning ----------
-export const PERIOD_DAYS = { daily: 1, weekly: 7, monthly: 30 };
-const PERIOD_SHORT = { daily: 'day', weekly: 'wk', monthly: 'mo' };
+export const PERIOD_DAYS = { daily: 1, weekly: 7, biweekly: 14, monthly: 30 };
+const PERIOD_SHORT = { daily: 'day', weekly: 'wk', biweekly: '2 wks', monthly: 'mo' };
 export const DEFAULT_DAYS_PER_TURN = 1; // each swipe is one day unless a card says otherwise
 
 // Day 1 is a Monday. Weekly flows can land on a set weekday (0 = Mon … 6 = Sun).
@@ -39,6 +39,10 @@ export const SLEEP_THRESHOLD = 1;
 export const LOW_HEALTH = 50;            // below this: more medical events, worse job odds
 export const HEALTH_LOSS_PER_OVERCOMMITTED_DAY = 5;
 const SOCIAL_LOSS_PER_OVERCOMMITTED_DAY = 1;
+// Stretched thin: this many overcommitted days within a week prompts a check-in
+// on every commitment (keep or drop), at most once per CHECKIN_COOLDOWN days.
+const STRETCHED_DAYS = 3;
+const CHECKIN_COOLDOWN = 14;
 const HEALTH_GAIN_PER_WEEK = 5;          // per week of rested, debt-free days
 const LOW_HEALTH_JOB_PENALTY = 0.15;     // subtracted from job application odds
 
@@ -65,6 +69,7 @@ const LOW_STAKES = new Set([
   'gym', 'bike', 'hobby-guitar', 'hobby-soccer', 'hobby-baking', 'book-club', 'volunteer-oldfolks',
   'foodbank', 'food-stop', 'meal-prep', 'family-dinner', 'sell-clothes', 'coupons', 'library-book',
   'spare-ticket', 'sneaker-sale', 'budget-app', 'phone-plan',
+  'morning-run', 'yoga', 'meal-prep-habit', 'language-app', 'deep-clean',
 ]);
 
 export const DOWN_PAYMENT_GOAL = 10000;  // house listings appear once you have this much
@@ -94,7 +99,41 @@ const jobHoursOn = (s, day) =>
     : 0;
 // Hours your commitments take on `day`.
 const commitmentHoursOn = (s, day) =>
-  s.commitments.filter((c) => c.weekdays.includes(dayOfWeek(day))).reduce((h, c) => h + c.hours, 0);
+  s.commitments.filter((c) => commitmentOn(c, day)).reduce((h, c) => h + c.hours, 0);
+
+// How often a commitment repeats (`cadence` on a commit; weekly by default).
+// Weekly ones land on set weekdays; the others count from their first day.
+export const CADENCES = { daily: 1, '2days': 2, '3days': 3, weekly: 7, biweekly: 14, monthly: 30 };
+
+// Is commitment `c` (as stored, or as planned) happening on `day`?
+export function commitmentOn(c, day) {
+  if (!c.every || c.every === 7) return c.weekdays.includes(dayOfWeek(day));
+  return day >= c.anchor && (day - c.anchor) % c.every === 0;
+}
+
+// When a new commitment would happen: { every, weekdays, anchor }. Daily and
+// every-few-days ones start tomorrow; every-other-week and monthly ones start on
+// the next free-est weekday.
+export function planCommitment(c, s) {
+  const every = CADENCES[c.cadence ?? 'weekly'];
+  if (every === 7) return { every, weekdays: commitmentDays(c, s), anchor: null };
+  if (every < 7) return { every, weekdays: [], anchor: s.day + 1 };
+  const [wd] = commitmentDays(c, s);
+  return { every, weekdays: [wd], anchor: s.day + 1 + ((wd - dayOfWeek(s.day + 1) + 7) % 7) };
+}
+
+// "every day", "every 3 days", "every Sat", "every other Thu", "once a month".
+export function scheduleText(c) {
+  const days = (c.weekdays ?? []).map((d) => WEEKDAYS[d]).join(', ');
+  switch (c.every ?? 7) {
+    case 1: return 'every day';
+    case 14: return `every other ${days}`;
+    case 30: return 'once a month';
+    case 7: return `every ${days}`;
+    default: return `every ${c.every} days`;
+  }
+}
+const timesPerWeek = (c) => (c.every && c.every !== 7 ? 7 / c.every : c.weekdays.length);
 // Free hours on `day`, minus any hours a card keeps you busy (`busy`).
 export const freeHours = (s, day = s.day, busy = 0) =>
   FREE_HOURS_PER_DAY - jobHoursOn(s, day) - commitmentHoursOn(s, day) - busy;
@@ -102,7 +141,7 @@ export const isUnderSlept = (s) => freeHours(s) <= SLEEP_THRESHOLD;
 
 // Warns before a choice overcommits you. Returns { days, ongoing }:
 //   days:    how many days of this turn would be overcommitted
-//   ongoing: true if a new commitment would overcommit its weekday every week
+//   ongoing: true if a new commitment or job would overcommit the days it lands on
 export function overcommitPreview(s, card, choice) {
   const length = choice.days ?? card.days ?? DEFAULT_DAYS_PER_TURN;
   let days = 0;
@@ -111,9 +150,20 @@ export function overcommitPreview(s, card, choice) {
   }
   let ongoing = false;
   if (choice.commit) {
-    const monday = Math.floor((s.day - 1) / 7) * 7 + 8; // next week, when jobs have started
-    ongoing = commitmentDays(choice.commit, s).some(
-      (wd) => freeHours(s, monday + wd) - choice.commit.hours <= SLEEP_THRESHOLD);
+    // Check the next four weeks (from next Monday, when jobs have started).
+    const plan = planCommitment(choice.commit, s);
+    const monday = Math.floor((s.day - 1) / 7) * 7 + 8;
+    for (let d = monday; d < monday + 28 && !ongoing; d++) {
+      if (commitmentOn(plan, d) && freeHours(s, d) - choice.commit.hours <= SLEEP_THRESHOLD) ongoing = true;
+    }
+  }
+  // A new job's hours on top of your routines (checked over the first month of work).
+  const jobHours = choice.apply?.job.hours ?? 0;
+  if (jobHours) {
+    const start = s.day + length;
+    for (let d = start; d < start + 28 && !ongoing; d++) {
+      if (WORKDAYS.includes(dayOfWeek(d)) && freeHours(s, d) - jobHours <= SLEEP_THRESHOLD) ongoing = true;
+    }
   }
   return { days, ongoing };
 }
@@ -152,7 +202,7 @@ export function netAfterRental(s, r) {
 // Hours a week taken by jobs (Mon–Fri) and commitments.
 export const committedHoursPerWeek = (s) =>
   s.flows.filter((f) => f.kind === 'job').reduce((h, f) => h + (f.hours ?? 0) * 5, 0) +
-  s.commitments.reduce((h, c) => h + c.hours * c.weekdays.length, 0);
+  s.commitments.reduce((h, c) => h + c.hours * timesPerWeek(c), 0);
 
 // What fills a day: job, commitments, one-off busy hours, and what's left.
 export function timeBreakdown(s, day = s.day) {
@@ -174,11 +224,11 @@ export function timePreview(s, card, choice) {
   }
   if (choice.commit) {
     hours -= choice.commit.hours;
-    parts.push(`-${choice.commit.hours}h every ${commitmentDays(choice.commit, s).map((d) => WEEKDAYS[d]).join(', ')}`);
+    parts.push(`-${choice.commit.hours}h ${scheduleText(planCommitment(choice.commit, s))}`);
   }
   if (choice.drop) {
     const c = s.commitments.find((x) => x.id === choice.drop);
-    if (c) { hours += c.hours; parts.push(`+${c.hours}h every ${c.weekdays.map((d) => WEEKDAYS[d]).join(', ')}`); }
+    if (c) { hours += c.hours; parts.push(`+${c.hours}h ${scheduleText(c)}`); }
   }
   if (choice.apply?.job.hours) {
     hours -= choice.apply.job.hours;
@@ -385,6 +435,7 @@ export const currentGoal = (s) => GOALS.find((g) => !s.goalsDone.includes(g.id))
 //              { id, label, image, hours, cost: { amount, every }, gains: [{ stat, amount, every,
 //                chance?, afterDays? }], keepPrompt?, dropLabel?, dropOutcome? }
 //              Lands on `weekday` (or `weekdays`) if set, else your freest day.
+//              `cadence`: 'daily', '2days', '3days', 'weekly' (default), 'biweekly' or 'monthly'.
 //              Therapy sessions let you drop commitments to get the hours back.
 const SKIP = { label: 'Skip', outcome: 'You let this one pass.' };
 
@@ -887,6 +938,144 @@ export const DECISIONS = [
     right: { label: 'Not for me', outcome: 'You will keep it all in your head.' },
   },
 
+  // --- Routines: commitments on different rhythms, from daily to monthly ---
+  {
+    id: 'morning-run',
+    image: '🏃',
+    prompt: 'Start running for an hour every morning?',
+    left: {
+      label: 'Start running',
+      commit: {
+        id: 'running', label: 'Morning run', image: '🏃', hours: 1, cadence: 'daily',
+        gains: [{ stat: 'health', amount: 2, every: 'weekly' }],
+        keepPrompt: 'Keep up the morning runs?',
+      },
+      outcome: 'Two miles and sore calves. By next week it gets easier.',
+    },
+    right: { label: 'Sleep in', outcome: 'The snooze button wins again.' },
+  },
+  {
+    id: 'language-app',
+    image: '🗣️',
+    prompt: 'Learn Spanish with an hour of practice every day?',
+    left: {
+      label: 'Start',
+      commit: {
+        id: 'spanish', label: 'Spanish practice', image: '🗣️', hours: 1, cadence: 'daily',
+        gains: [{ stat: 'skills', amount: 1, every: 'monthly', afterDays: 30 }],
+        keepPrompt: 'Keep practicing Spanish every day?',
+      },
+      outcome: '¡Hola! Your streak starts today.',
+    },
+    right: { label: 'Maybe later', outcome: 'Mañana, maybe.' },
+  },
+  {
+    id: 'neighbor-cat',
+    image: '🐱',
+    prompt: "Your neighbor travels for work. Feed their cat every other day for $20 a week?",
+    left: {
+      label: 'Deal',
+      commit: {
+        id: 'neighbor-cat', label: "Neighbor's cat", image: '🐱', hours: 1, cadence: '2days',
+        gains: [{ stat: 'wealth', amount: 20, every: 'weekly' }],
+        keepPrompt: "Keep feeding the neighbor's cat?",
+      },
+      outcome: 'The cat ignores you. The $20 a week does not.',
+    },
+    right: { label: 'Not a cat person', outcome: 'They found a pet sitter instead.' },
+  },
+  {
+    id: 'yoga',
+    image: '🧘',
+    prompt: 'A yoga studio runs a class every 3 days for $35 a month. Sign up?',
+    left: {
+      label: 'Sign up',
+      commit: {
+        id: 'yoga', label: 'Yoga', image: '🧘', hours: 1, cadence: '3days',
+        cost: { amount: -35, every: 'monthly' },
+        gains: [{ stat: 'health', amount: 3, every: 'weekly' }],
+        keepPrompt: 'Keep going to yoga?',
+      },
+      outcome: 'You can almost touch your toes.',
+    },
+    right: SKIP,
+  },
+  {
+    id: 'meal-prep-habit',
+    image: '🥡',
+    prompt: 'Make meal prep a Sunday habit? Two hours a week saves about $15.',
+    left: {
+      label: 'Every Sunday',
+      commit: {
+        id: 'mealprep', label: 'Sunday meal prep', image: '🥡', hours: 2, weekday: 6,
+        gains: [{ stat: 'wealth', amount: 15, every: 'weekly' }, { stat: 'health', amount: 1, every: 'weekly' }],
+        keepPrompt: 'Keep meal prepping on Sundays?',
+      },
+      outcome: 'Five labeled containers in the fridge. Very adult.',
+    },
+    right: { label: 'Wing it', outcome: 'Cereal for dinner it is.' },
+  },
+  {
+    id: 'grandma-visits',
+    image: '🫖',
+    prompt: 'Your grandma would love a visit every other week. Commit to it?',
+    left: {
+      label: 'Visit her',
+      commit: {
+        id: 'grandma', label: 'Visiting grandma', image: '🫖', hours: 3, cadence: 'biweekly',
+        gains: [{ stat: 'social', amount: 1, every: 'biweekly' }],
+        keepPrompt: 'Keep visiting grandma every other week?',
+      },
+      outcome: 'Tea, cookies and stories you have heard before. She lights up when you arrive.',
+    },
+    right: { label: 'Call instead', outcome: 'A quick call. She says she understands.' },
+  },
+  {
+    id: 'deep-clean',
+    image: '🧽',
+    prompt: 'Deep clean your space every other week?',
+    left: {
+      label: 'Scrub',
+      commit: {
+        id: 'cleaning', label: 'Deep clean', image: '🧽', hours: 2, cadence: 'biweekly',
+        gains: [{ stat: 'health', amount: 1, every: 'biweekly' }],
+        keepPrompt: 'Keep up the deep cleans?',
+      },
+      outcome: 'You found a missing sock and a $5 bill. Spotless.',
+    },
+    right: { label: 'Later', outcome: 'The dust bunnies multiply.' },
+  },
+  {
+    id: 'blood-drive',
+    image: '🩸',
+    prompt: 'Donate blood once a month at the community center?',
+    left: {
+      label: 'Donate',
+      commit: {
+        id: 'blood', label: 'Blood donation', image: '🩸', hours: 2, cadence: 'monthly',
+        gains: [{ stat: 'social', amount: 1, every: 'monthly' }],
+        keepPrompt: 'Keep donating blood every month?',
+      },
+      outcome: 'A cookie, a juice box and a sticker. You feel good about it.',
+    },
+    right: { label: 'Not for me', outcome: 'Needles are not your thing.' },
+  },
+  {
+    id: 'waterfront-cleanup',
+    image: '🏖️',
+    prompt: 'Join a volunteer crew that cleans up the waterfront once a month?',
+    left: {
+      label: 'Join',
+      commit: {
+        id: 'cleanup', label: 'Waterfront cleanup', image: '🏖️', hours: 4, cadence: 'monthly',
+        gains: [{ stat: 'social', amount: 1, every: 'monthly' }],
+        keepPrompt: 'Stay on the waterfront cleanup crew?',
+      },
+      outcome: 'Four hours, six bags of trash and a new group chat.',
+    },
+    right: SKIP,
+  },
+
   // --- Side quests: hobbies that can grow into gigs, collectibles and income streams ---
 
   // Pottery → artisan markets → kiln upgrade → café wholesale stream
@@ -1320,7 +1509,7 @@ export function reassessCard(c) {
     left: {
       label: c.dropLabel ?? 'Drop',
       drop: c.id,
-      outcome: c.dropOutcome ?? `You let go of ${c.label.toLowerCase()} and got ${c.hours}h back every ${c.weekdays.map((d) => WEEKDAYS[d]).join(', ')}.`,
+      outcome: c.dropOutcome ?? `You let go of ${c.label.toLowerCase()} and got ${c.hours}h back ${scheduleText(c)}.`,
     },
     right: { label: 'Keep', outcome: `${c.label} stays.` },
   };
@@ -2560,7 +2749,7 @@ function startCommitment(next, c) {
   if (next.commitments.some((x) => x.id === c.id)) return;
   next.since[c.id] = next.day;
   next.commitments.push({
-    id: c.id, label: c.label, image: c.image, hours: c.hours, weekdays: commitmentDays(c, next),
+    id: c.id, label: c.label, image: c.image, hours: c.hours, ...planCommitment(c, next),
     keepPrompt: c.keepPrompt, dropLabel: c.dropLabel, dropOutcome: c.dropOutcome,
   });
   if (c.cost) next.flows.push(makeFlow({ label: c.label, ...c.cost, commitmentId: c.id }, next.day));
@@ -2814,6 +3003,7 @@ export function applyChoice(stats, card, side, rng = Math.random) {
         gains.Overcommitted.social = (gains.Overcommitted.social ?? 0) - lost;
       }
       healthCauses.add('😴 Overcommitted');
+      next.overDays = [...(next.overDays ?? []).filter((x) => x > d - 7), d];
     }
     if (next.wealth < 0) { rate -= DEBT_HEALTH_LOSS_PER_WEEK; healthCauses.add('💳 In debt'); }
     if (rate === 0 && !overcommitted) rate = HEALTH_GAIN_PER_WEEK;
@@ -2831,6 +3021,16 @@ export function applyChoice(stats, card, side, rng = Math.random) {
   next.flows = next.flows.filter((f) => f.endDay === null || f.endDay > next.day);
   next.skills = Math.max(0, next.skills);
   if (card.therapy) next.nextTherapy = next.day + THERAPY_EVERY;
+
+  // Stretched thin: time to rethink your commitments.
+  const recentOver = (next.overDays ?? []).filter((x) => x > next.day - 7).length;
+  const lastCheckin = next.since.checkin;
+  if (recentOver >= STRETCHED_DAYS && next.commitments.length && !next.queue.length &&
+      (lastCheckin == null || next.day - lastCheckin >= CHECKIN_COOLDOWN)) {
+    next.queue = next.commitments.map((c) => c.id);
+    next.since.checkin = next.day;
+    outcome = `${outcome} 😴 You're stretched thin. Time to rethink your commitments.`.trim();
+  }
 
   next.health = Math.max(0, Math.min(100, next.health));
   const healthDelta = Math.round(next.health) - Math.round(healthBefore);

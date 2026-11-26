@@ -14,6 +14,7 @@ import {
   timePreview,
   healthPreview,
   committedHoursPerWeek,
+  scheduleText,
   STARTING_DEBT,
   DEBT_HEALTH_LOSS_PER_WEEK,
   isIncomeStream,
@@ -95,7 +96,7 @@ function TimeMeter({ stats, preview, float }) {
       <Float float={float} />
       {preview ? <span className={`meter-tip ${preview.hours < 0 ? 'neg' : 'pos'}`}>{preview.text}</span> : null}
       <div className="meter-row">
-        <span>Time</span>
+        <span>Daytime: {WEEKDAYS[dayOfWeek(stats.day)]}</span>
         <b className="num">{left}h</b>
       </div>
       <div className="seg" aria-hidden="true">
@@ -112,7 +113,7 @@ function TimeMeter({ stats, preview, float }) {
 // Floating numbers for the meters after a turn.
 function turnFloats(before, after, choice, turn) {
   const f = (d, unit = '') => (d ? { text: `${d > 0 ? '+' : ''}${d}${unit}`, tone: d > 0 ? 'pos' : 'neg', key: turn } : null);
-  const weekly = committedHoursPerWeek(after) - committedHoursPerWeek(before);
+  const weekly = Math.round((committedHoursPerWeek(after) - committedHoursPerWeek(before)) * 10) / 10;
   const busy = choice.busy ?? 0;
   const parts = [];
   if (busy) parts.push(`${busy > 0 ? '-' : '+'}${Math.abs(busy)}h today`);
@@ -433,7 +434,7 @@ export default function App() {
                   {stats.commitments.map((c) => (
                     <li key={c.id}>
                       <span>{c.image} {c.label}</span>
-                      <span className="neg">{c.hours}h {c.weekdays.map((d) => WEEKDAYS[d]).join(', ')}</span>
+                      <span className="neg">{c.hours}h {scheduleText(c)}</span>
                     </li>
                   ))}
                 </ul>

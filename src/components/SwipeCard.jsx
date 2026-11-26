@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { STAT_META, money, commitmentDays, overcommitPreview, HEALTH_LOSS_PER_OVERCOMMITTED_DAY, WEEKDAYS, PAYDAY, dayOfWeek, formatDelta, formatFlow, jobChance, jobPay, choiceChance, resolve, netAfterRental, EVICTION_MONTHS } from '../decisions.js';
+import { STAT_META, money, planCommitment, scheduleText, overcommitPreview, HEALTH_LOSS_PER_OVERCOMMITTED_DAY, WEEKDAYS, PAYDAY, dayOfWeek, formatDelta, formatFlow, jobChance, jobPay, choiceChance, resolve, netAfterRental, EVICTION_MONTHS } from '../decisions.js';
 
 // Swipe right to accept, left to decline. In the card data, `left` is the accept
 // option and `right` the decline, so each screen side maps to the other key.
@@ -21,7 +21,7 @@ function Effects({ choice, stats, card, side }) {
       {over.days > 0 && (
         <li className="warn">😴 Overcommits {over.days} day{over.days > 1 ? 's' : ''}: -{HEALTH_LOSS_PER_OVERCOMMITTED_DAY * over.days} health</li>
       )}
-      {over.ongoing && <li className="warn">😴 Overcommits that day every week</li>}
+      {over.ongoing && <li className="warn">😴 {choice.apply ? "With your routines, overcommits workdays" : "Overcommits the days it lands on"}</li>}
       {card.rental && side === 'left' ? (() => {
         const net = netAfterRental(stats, card.rental);
         return net < 0
@@ -66,7 +66,7 @@ function Effects({ choice, stats, card, side }) {
       {commit && (
         <>
           <li className="neg">
-            🗓️ {commit.hours}h every {commitmentDays(commit, stats).map((d) => WEEKDAYS[d]).join(', ')}
+            🗓️ {commit.hours}h {scheduleText(planCommitment(commit, stats))}
           </li>
           {commit.cost && <li className="neg">{formatFlow(commit.cost)}</li>}
           {(commit.gains ?? []).map((g) => (
