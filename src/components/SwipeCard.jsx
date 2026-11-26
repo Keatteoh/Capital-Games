@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { STAT_META, money, commitmentDays, overcommitPreview, HEALTH_LOSS_PER_OVERCOMMITTED_DAY, WEEKDAYS, PAYDAY, dayOfWeek, formatDelta, formatFlow, jobChance, jobPay, choiceChance, resolve } from '../decisions.js';
+import { STAT_META, money, commitmentDays, overcommitPreview, HEALTH_LOSS_PER_OVERCOMMITTED_DAY, WEEKDAYS, PAYDAY, dayOfWeek, formatDelta, formatFlow, jobChance, jobPay, choiceChance, resolve, netAfterRental, EVICTION_MONTHS } from '../decisions.js';
 
 const SWIPE_THRESHOLD = 90; // px of drag needed to commit a choice
 const DRAG_START = 8;       // px of movement before a touch counts as a drag (vs a tap)
 
 const statName = (key) => STAT_META[key]?.label.toLowerCase();
 
-function Effects({ choice, stats, card }) {
+function Effects({ choice, stats, card, side }) {
   const { apply, check, commit } = choice;
   const effects = resolve(choice.effects, stats) ?? {};
   const pay = resolve(choice.pay, stats);
@@ -18,6 +18,12 @@ function Effects({ choice, stats, card }) {
         <li className="warn">😴 Overcommits {over.days} day{over.days > 1 ? 's' : ''}: -{HEALTH_LOSS_PER_OVERCOMMITTED_DAY * over.days} health</li>
       )}
       {over.ongoing && <li className="warn">😴 Overcommits that day every week</li>}
+      {card.rental && side === 'left' ? (() => {
+        const net = netAfterRental(stats, card.rental);
+        return net < 0
+          ? <li className="warn">📉 Net {money(net)}/wk after rent: you'd fall behind ({EVICTION_MONTHS} months = eviction)</li>
+          : <li className="pos">📈 Net +{money(net)}/wk after rent</li>;
+      })() : null}
       {apply && (
         <li className="pos">
           🎲 {pct(jobChance(apply, stats))} → {formatFlow({ weekday: PAYDAY, ...apply.job, amount: jobPay(apply.job, stats) })}
@@ -27,13 +33,15 @@ function Effects({ choice, stats, card }) {
       {apply?.job.skillPay && <li>💪 Pay scales with skills</li>}
       {check && (
         <li className="pos">
-          🎲 {pct(choiceChance(choice, stats))} {check.stat ? `${statName(check.stat)} check` : 'chance'}
+          {check.rare ? '✨' : '🎲'} {pct(choiceChance(choice, stats))} {check.label ?? (check.stat ? `${statName(check.stat)} check` : 'chance')}
         </li>
       )}
       {choice.days && <li>⏳ {choice.days} days</li>}
-      {choice.busy && (
+      {choice.busy > 0 && (
         <li className="neg">🕘 {choice.busy}h {(choice.days ?? 1) > 1 ? 'a day while it lasts' : 'of today'}</li>
       )}
+      {choice.busy < 0 && <li className="pos">🕘 +{-choice.busy}h today</li>}
+      {choice.note && <li className="neg">{choice.note}</li>}
       {choice.pauseIncome && <li className="neg">⏸️ No income for 1 week</li>}
       {pay && (
         <li className="pos">
@@ -77,8 +85,9 @@ function cardKind(decision) {
   return 'Decision';
 }
 
-export default function SwipeCard({ decision, stats, onChoose }) {
+export default function SwipeCard({ decision, stats, onChoose, onPreview }) {
   const [dx, setDx] = useState(0);
+  const [hover, setHover] = useState(null); // choice under the mouse or keyboard focus
   const [dragging, setDragging] = useState(false);
   const [leaving, setLeaving] = useState(null); // 'left' | 'right' | null
   const pointer = useRef(null); // { id, x } while a finger/mouse is down
@@ -126,15 +135,20 @@ export default function SwipeCard({ decision, stats, onChoose }) {
 
   const progress = Math.min(Math.abs(dx) / SWIPE_THRESHOLD, 1);
   const activeSide = dx < -10 ? 'left' : dx > 10 ? 'right' : null;
+  // Tell the meters which choice is being considered, so they can preview its cost.
+  const considering = activeSide ?? hover;
+  useEffect(() => { onPreview?.(considering); }, [considering, onPreview]);
+  useEffect(() => () => onPreview?.(null), [onPreview]);
+
   const isImageUrl = /[./]/.test(decision.image);
-  const chance = choiceChance(decision.left, stats);
+  const chance = decision.left.check?.rare ? null : choiceChance(decision.left, stats);
   const check = decision.left.check;
 
   return (
     <>
       <div className="card-slot">
         <article
-          className={`card ${dragging ? 'dragging' : ''} ${decision.event ? 'card-event' : ''} ${decision.queued || decision.therapy ? 'card-reassess' : ''}`}
+          className={`card ${dragging ? 'dragging' : ''} ${decision.event ? 'card-event' : ''} ${decision.queued || decision.therapy || decision.housing ? 'card-reassess' : ''}`}
           style={{ transform: `translateX(${dx}px) rotate(${dx / 18}deg)` }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -185,11 +199,15 @@ export default function SwipeCard({ decision, stats, onChoose }) {
             type="button"
             className={`choice choice-${side} ${activeSide === side ? 'active' : ''}`}
             onClick={() => !dragging && commit(side)}
+            onPointerEnter={(e) => e.pointerType === 'mouse' && setHover(side)}
+            onPointerLeave={() => setHover(null)}
+            onFocus={() => setHover(side)}
+            onBlur={() => setHover(null)}
           >
             <strong>
               {side === 'left' ? `← ${decision.left.label}` : `${decision.right.label} →`}
             </strong>
-            <Effects choice={decision[side]} stats={stats} card={decision} />
+            <Effects choice={decision[side]} stats={stats} card={decision} side={side} />
           </button>
         ))}
       </div>

@@ -59,6 +59,13 @@ export const BIG_EXPENSES_AFTER = 20;
 
 export const DOWN_PAYMENT_GOAL = 10000;  // house listings appear once you have this much
 const HOUSE_LISTING_CHANCE = 0.5;        // per turn, while saving is done and you're house hunting
+
+// Renting: listings show up once you've had income and cleared your debt once.
+const RENTAL_LISTING_CHANCE = 0.12;      // per turn, while you live with your parents
+export const EVICTION_MONTHS = 3;        // rent days in a row you can't cover before eviction
+export const EVICTION_HEALTH_LOSS = 40;
+const EVICTION_COOLDOWN = 60;            // days before landlords will look at you again
+const JOB_LEAD_BONUS = 0.15;             // a job lead adds this to your next application
 export const INCOME_STREAMS_GOAL = 7;
 
 // Side-quest cards are drawn less often than everyday cards (1 = same odds).
@@ -114,6 +121,68 @@ export function commitmentDays(c, s) {
   return [order.reduce((best, wd) => (load(wd) < load(best) ? wd : best), order[0])];
 }
 export const isHomeowner = (s) => s.house != null;
+export const isRenting = (s) => s.rental != null;
+export const livesWithParents = (s) => !isRenting(s) && !isHomeowner(s) && !s.lodging;
+// After an eviction you might be on a friend's couch or in a shelter.
+export const isCouchSurfing = (s) => s.lodging?.kind === 'couch';
+export const inShelter = (s) => s.lodging?.kind === 'shelter';
+// Rentals: you need some income, and to have cleared your debt at least once
+// (going back into debt later doesn't hide them again).
+export const rentalsUnlocked = (s) =>
+  s.goalsDone.includes('debt') &&
+  (hasJob(s) || incomeStreams(s) > 0) &&
+  !isRenting(s) && !isHomeowner(s) &&
+  !(s.since.evicted != null && s.day - s.since.evicted < EVICTION_COOLDOWN);
+// Weekly net cash flow if you signed this rental: rent and utilities in, allowance out.
+export function netAfterRental(s, r) {
+  const flows = s.flows.filter((f) => f.tag !== 'allowance' && f.tag !== 'lodging');
+  return weeklyNet(flows) - ((r.rent + r.utilities) * 7) / 30;
+}
+
+// Hours a week taken by jobs (Mon–Fri) and commitments.
+export const committedHoursPerWeek = (s) =>
+  s.flows.filter((f) => f.kind === 'job').reduce((h, f) => h + (f.hours ?? 0) * 5, 0) +
+  s.commitments.reduce((h, c) => h + c.hours * c.weekdays.length, 0);
+
+// What fills a day: job, commitments, one-off busy hours, and what's left.
+export function timeBreakdown(s, day = s.day) {
+  const job = jobHoursOn(s, day);
+  const commit = commitmentHoursOn(s, day);
+  return { job, commit, free: FREE_HOURS_PER_DAY - job - commit };
+}
+
+// How a choice changes your time, before you make it. Returns { hours, text } or null.
+// hours < 0 spends time, > 0 frees it up.
+export function timePreview(s, card, choice) {
+  const parts = [];
+  let hours = 0;
+  const days = choice.days ?? card.days ?? DEFAULT_DAYS_PER_TURN;
+  if (choice.busy) {
+    hours -= choice.busy;
+    const sign = choice.busy > 0 ? '-' : '+';
+    parts.push(`${sign}${Math.abs(choice.busy)}h ${days > 1 ? 'a day' : 'today'}`);
+  }
+  if (choice.commit) {
+    hours -= choice.commit.hours;
+    parts.push(`-${choice.commit.hours}h every ${commitmentDays(choice.commit, s).map((d) => WEEKDAYS[d]).join(', ')}`);
+  }
+  if (choice.drop) {
+    const c = s.commitments.find((x) => x.id === choice.drop);
+    if (c) { hours += c.hours; parts.push(`+${c.hours}h every ${c.weekdays.map((d) => WEEKDAYS[d]).join(', ')}`); }
+  }
+  if (choice.apply?.job.hours) {
+    hours -= choice.apply.job.hours;
+    parts.push(`-${choice.apply.job.hours}h a day if hired`);
+  }
+  return parts.length ? { hours, text: parts.join(' · ') } : null;
+}
+
+// Health a choice costs or gives right away (its effects plus any overcommitted days).
+export function healthPreview(s, card, choice) {
+  const fx = resolve(choice.effects, s) ?? {};
+  const over = overcommitPreview(s, card, choice).days * HEALTH_LOSS_PER_OVERCOMMITTED_DAY;
+  return (fx.health ?? 0) - over;
+}
 // Days since a flag was set or a commitment started (-1 if never).
 export const daysSince = (s, key) => (s.since[key] == null ? -1 : s.day - s.since[key]);
 
@@ -135,7 +204,8 @@ const socialOdds = (base, s) => clampChance(base + SOCIAL_PER_POINT * s.social);
 // Job odds after the low-health penalty. Used for both the card display and the roll.
 export function jobChance(apply, s) {
   const penalty = s.health < LOW_HEALTH ? LOW_HEALTH_JOB_PENALTY : 0;
-  return clampChance(apply.chance(s) - penalty);
+  const lead = hasFlag(s, 'job-lead') ? JOB_LEAD_BONUS : 0;
+  return clampChance(apply.chance(s) - penalty + lead);
 }
 
 // Odds shown on the card's dice for either a job application or a stat check.
@@ -169,6 +239,7 @@ function makeFlow(def, startDay) {
     weekday: def.every === 'weekly' ? dayOfWeek(start) : null,
     activeFrom,
     hours: def.hours ?? null,           // jobs: hours per workday
+    tag: def.tag ?? null,               // 'allowance', 'rent' (rent day), 'home' (other renting costs)
     startDay: start,
     endDay: def.durationDays ? start + def.durationDays : null, // exclusive
   };
@@ -191,18 +262,27 @@ const CHARACTERS = {
 };
 
 export function makeCharacter(rng = Math.random) {
-  const age = 19 + Math.floor(rng() * 50); // 19–68
+  const age = 16 + Math.floor(rng() * 40); // 16–55
   const group = age >= 55 ? CHARACTERS.older : CHARACTERS.younger;
   const c = group[Math.floor(rng() * group.length)];
   const tone = SKIN_TONES[Math.floor(rng() * SKIN_TONES.length)];
   return { emoji: c.base + tone, gender: c.gender, age };
 }
 
+// Who you live with at the start. A single parent can't give you an allowance,
+// and sometimes needs help with the bills.
+export function makeHousehold(rng = Math.random) {
+  const single = rng() < 0.5;
+  const parent = rng() < 0.5 ? 'Mom' : 'Dad';
+  return { single, parent: single ? parent : 'your parents', label: single ? `${parent} (single parent)` : 'Both parents' };
+}
+
 export function createInitialStats() {
-  const allowance = randomInt(0, 15);
+  const household = makeHousehold();
+  const allowance = household.single ? 0 : randomInt(5, 15);
   const flows = [makeFlow(COST_OF_LIVING, 1)];
   if (allowance > 0) {
-    flows.unshift(makeFlow({ label: 'Allowance from parents', amount: allowance, every: 'weekly', weekday: WED }, 1));
+    flows.unshift(makeFlow({ label: 'Allowance from parents', amount: allowance, every: 'weekly', weekday: WED, tag: 'allowance' }, 1));
   }
   return {
     day: 1,
@@ -212,6 +292,10 @@ export function createInitialStats() {
     health: 100,
     skills: randomInt(1, 4),
     character: makeCharacter(),
+    household,
+    rental: null,       // the place you rent (see makeRental), with `behind`: rent days you couldn't cover
+    lodging: null,      // after an eviction: { kind: 'couch' | 'shelter', host, next } (next = day of the weekly check-in)
+    housingPrompt: null, // where-to-stay card waiting to be shown: 'evicted' or a pair of options
     flows,
     flags: [],          // things the player has learned/unlocked, e.g. 'chainsaw'
     commitments: [],    // ongoing hobbies etc.: { id, label, image, hours, keepPrompt, dropLabel }
@@ -235,6 +319,15 @@ export const GOALS = [
     hint: `You start ${money(-STARTING_DEBT)} in debt. Every week in debt costs ${DEBT_HEALTH_LOSS_PER_WEEK} health, and you can't recover while you owe money. Get a job and get back to $0.`,
     isDone: (s) => s.wealth >= 0,
     progress: (s) => (s.wealth < 0 ? `${money(-s.wealth)} left` : 'Debt free'),
+  },
+  {
+    id: 'move-out',
+    title: 'Move out',
+    hint: 'Rentals show up once you have income and have cleared your debt. Rent is a big monthly bill, so line up enough income to cover it first. A roommate makes it cheaper, if they pick you. Fall behind on rent 3 months in a row and you are evicted (-40 health).',
+    isDone: (s) => !livesWithParents(s),
+    progress: (s) => (s.goalsDone.includes('debt') && (hasJob(s) || incomeStreams(s) > 0)
+      ? `Income ${money(weeklyNet(s.flows))}/wk`
+      : 'Need income, debt-free'),
   },
   {
     id: 'house',
@@ -281,6 +374,72 @@ export const currentGoal = (s) => GOALS.find((g) => !s.goalsDone.includes(g.id))
 //              Lands on `weekday` (or `weekdays`) if set, else your freest day.
 //              Therapy sessions let you drop commitments to get the hours back.
 const SKIP = { label: 'Skip', outcome: 'You let this one pass.' };
+
+// ---------- Food and drink ----------
+// One food stop card, a different option each time: each has its own cost and
+// health effect, and a small chance of a run-in that pays off.
+const FOODS = [
+  { name: 'latte', image: '☕', cost: 6, health: 0, prompt: 'The corner café smells amazing. Grab a $6 latte?',
+    yes: 'Oat milk, extra shot. Worth it.', skip: 'Brew at home', no: 'Not as fancy, but free.' },
+  { name: 'bubble tea', image: '🧋', cost: 7, health: -1, prompt: 'Brown sugar bubble tea for $7?',
+    yes: 'Delicious. The sugar crash comes later.', skip: 'Water', no: 'Hydrated and $7 richer.' },
+  { name: 'green smoothie', image: '🥤', cost: 9, health: 2, prompt: 'A $9 green smoothie: kale, mango, ginger?',
+    yes: 'Tastes like a lawn, feels like a reset.', skip: 'Skip it', no: 'Maybe tomorrow.' },
+  { name: 'tacos', image: '🌮', cost: 12, health: 0, prompt: 'The taco truck is parked outside. Three tacos for $12?',
+    yes: 'Al pastor, extra salsa. No regrets.', skip: 'Keep walking', no: 'The smell follows you for a block.' },
+  { name: 'croissant', image: '🥐', cost: 5, health: -1, prompt: 'Fresh croissants at the bakery, $5 each.',
+    yes: 'Flaky, buttery, gone in four bites.', skip: 'Resist', no: 'Willpower: strong.' },
+  { name: 'poke bowl', image: '🍣', cost: 14, health: 2, prompt: 'A $14 poke bowl for lunch?',
+    yes: 'Fresh, filling, and you feel great after.', skip: 'Leftovers', no: 'Leftovers again. Thrifty.' },
+  { name: 'hot dog', image: '🌭', cost: 3, health: -3, prompt: 'A gas station hot dog for $3. Tempting?',
+    yes: 'You regret it within the hour.', skip: 'No way', no: 'Your stomach thanks you.' },
+  { name: 'energy drink', image: '⚡', cost: 4, health: -2, saves: 1, prompt: 'Long day ahead. Crack a $4 energy drink?',
+    yes: 'Wired. You squeeze an extra hour out of the day, but sleep badly.', skip: 'Nap instead', no: 'A 20-minute nap. Not bad.' },
+  { name: 'ramen', image: '🍜', cost: 15, health: 1, prompt: 'The ramen shop has no line for once. $15 bowl?',
+    yes: 'Rich broth, soft egg. Restorative.', skip: 'Cook at home', no: 'Instant noodles. Close enough.' },
+  { name: 'fruit', image: '🍓', cost: 8, health: 3, prompt: 'Strawberries and peaches at the farmers market, $8?',
+    yes: 'Sweet, in season, and good for you.', skip: 'Skip it', no: 'You walk past the stalls.' },
+];
+
+// What you make and could sell to a stranger, based on your hobbies.
+const PRODUCTS = [
+  { id: 'pottery', thing: 'a vase', pay: { min: 80, max: 160 } },
+  { id: 'photo', thing: 'a framed print', pay: { min: 60, max: 140 } },
+  { id: 'garden', thing: 'a potted bonsai', pay: { min: 50, max: 120 } },
+  { id: 'bikes', thing: 'a refurbished bike', pay: { min: 120, max: 220 } },
+  { id: 'baking', thing: 'a box of pastries', pay: { min: 30, max: 60 } },
+];
+const productsFor = (s) => PRODUCTS.filter((p) => hasCommitment(s, p.id));
+
+function foodStop(s, rng = Math.random) {
+  const f = FOODS[Math.floor(rng() * FOODS.length)];
+  const product = pick(productsFor(s), rng);
+  return {
+    image: f.image,
+    prompt: f.prompt,
+    left: {
+      label: 'Buy',
+      effects: { wealth: -f.cost, ...(f.health ? { health: f.health } : {}) },
+      ...(f.saves ? { busy: -f.saves } : {}),
+      outcome: f.yes,
+      // A rare run-in while you're out. Better odds with more social points.
+      check: {
+        rare: true,
+        label: 'chance of a run-in',
+        chance: (st) => Math.min(0.15, 0.05 + 0.01 * Math.max(0, st.social)),
+        success: [
+          { effects: { social: 1 }, outcome: `${f.yes} And you bump into an old friend in line. +1 social.` },
+          { when: (st) => !hasFlag(st, 'job-lead'), setFlags: ['job-lead'],
+            outcome: `${f.yes} A job board by the door has a fresh listing: +15% odds on your next job application.` },
+          ...(product ? [{ weight: () => 2, pay: product.pay,
+            outcome: `${f.yes} The person next to you loves your work and buys ${product.thing}.` }] : []),
+        ],
+        fail: { outcome: f.yes },
+      },
+    },
+    right: { label: f.skip, outcome: f.no },
+  };
+}
 
 export const DECISIONS = [
   // --- Upskilling ---
@@ -625,12 +784,15 @@ export const DECISIONS = [
     right: { label: 'Takeout', effects: { wealth: -25 }, outcome: 'Delicious, and $25 gone.' },
   },
   {
-    id: 'coffee-run',
+    id: 'food-stop',
     repeatable: true,
+    weight: () => 0.8,
+    kicker: '🍽️ Food & drink',
     image: '☕',
-    prompt: 'Grab a $6 latte on the way, or brew coffee at home?',
-    left: { label: 'Latte', effects: { wealth: -6 }, outcome: 'Oat milk, extra shot. Worth it.' },
-    right: { label: 'Brew at home', outcome: 'Not as fancy, but free.' },
+    prompt: 'Grab something on the way?',
+    build: foodStop,
+    left: { label: 'Buy', outcome: '' },
+    right: { label: 'Skip', outcome: '' },
   },
   {
     id: 'sneaker-sale',
@@ -1156,6 +1318,24 @@ export function reassessCard(c) {
 // Events are repeatable unless `once: true`. `big: true` events wait until
 // BIG_EXPENSES_AFTER swipes have passed.
 export const EVENTS = [
+  {
+    id: 'parent-help',
+    image: '🏠',
+    weight: (s) => (s.household.single ? 1.5 : 0.3),
+    build: (s, rng) => {
+      const bills = ['electric bill', 'car repair', 'groceries', 'water bill', 'prescription'];
+      const bill = bills[Math.floor(rng() * bills.length)];
+      const amount = (s.household.single ? 40 : 20) + Math.floor(rng() * 9) * 10;
+      const who = s.household.single ? s.household.parent : 'Your parents';
+      return {
+        prompt: `${who} ${s.household.single ? 'is' : 'are'} short on the ${bill} this month. Chip in $${amount}?`,
+        left: { label: 'Help out', effects: { wealth: -amount, social: 1 }, outcome: 'They hugged you a little longer than usual.' },
+        right: { label: "Can't right now", effects: { social: -1 }, outcome: 'They said they understand. It still stings.' },
+      };
+    },
+    left: { label: 'Help out' },
+    right: { label: "Can't right now" },
+  },
   {
     id: 'medical-bill',
     big: true,
@@ -2167,10 +2347,83 @@ export function houseCard(h) {
       ['Mortgage', `$${h.mortgage}/wk`],
     ],
     left,
-    right: { label: 'Keep looking', outcome: 'You passed on this one.' },
+    right: { label: 'Keep looking', busy: 2, outcome: 'Two hours of open houses, and you passed on this one.' },
   };
 }
 
+// ---------- Rentals ----------
+// Rent and utilities are monthly. A roommate makes it cheaper, but they have
+// to pick you (a social check).
+const RENTAL_TYPES = [
+  { type: 'Room in a shared house', image: '🛏️', rent: [260, 340], utilities: [30, 45], roommate: true,
+    size: 'Bedroom, shared kitchen', blurb: 'three housemates, one bathroom', gains: [{ stat: 'social', amount: 1, every: 'monthly' }] },
+  { type: '2-bed apartment', image: '🏢', rent: [380, 460], utilities: [40, 55], roommate: true,
+    size: '2 bed, your half', blurb: 'split with a roommate', gains: [{ stat: 'social', amount: 1, every: 'monthly' }] },
+  { type: 'Basement apartment', image: '🚪', rent: [400, 480], utilities: [50, 70], roommate: false,
+    size: '1 bed', blurb: 'a little damp, very quiet', health: -3 },
+  { type: 'Studio apartment', image: '🏬', rent: [520, 620], utilities: [60, 80], roommate: false,
+    size: 'Studio', blurb: 'small, bright and all yours', health: 5 },
+  { type: '1-bed apartment', image: '🏙️', rent: [650, 780], utilities: [80, 100], roommate: false,
+    size: '1 bed', blurb: 'room to host friends', gains: [{ stat: 'social', amount: 1, every: 'monthly' }] },
+  { type: 'Downtown loft', image: '🌆', rent: [850, 980], utilities: [90, 120], roommate: false,
+    size: 'Open plan', blurb: 'exposed brick, bars downstairs', social: 2, gains: [{ stat: 'social', amount: 1, every: 'monthly' }] },
+];
+
+export function makeRental(rng = Math.random) {
+  const t = RENTAL_TYPES[Math.floor(rng() * RENTAL_TYPES.length)];
+  return {
+    type: t.type, image: t.image, size: t.size, blurb: t.blurb, roommate: t.roommate,
+    rent: roundTo(between(t.rent, rng), 10),
+    utilities: roundTo(between(t.utilities, rng), 5),
+    health: t.health ?? 0, social: t.social ?? 0, gains: t.gains ?? [],
+  };
+}
+
+// A swipe card for one rental listing. Signing costs a deposit (one month's rent).
+export function rentalCard(r) {
+  const moveIn = {
+    rental: r,
+    effects: { wealth: -r.rent, health: 5 + r.health, ...(r.social ? { social: r.social } : {}) },
+    recurring: [
+      { label: 'Rent', amount: -r.rent, every: 'monthly', tag: 'rent' },
+      { label: 'Utilities', amount: -r.utilities, every: 'monthly', tag: 'home' },
+      ...r.gains.map((g) => ({ label: r.roommate ? 'Roommate' : r.type, ...g, tag: 'home', afterDays: 30 })),
+    ],
+    outcome: `You moved into your ${r.type.toLowerCase()}: ${r.blurb}. Your own place!`,
+  };
+  const left = r.roommate
+    ? {
+        label: 'Apply',
+        effects: moveIn.effects,
+        recurring: moveIn.recurring,
+        check: {
+          stat: 'social',
+          chance: (s) => socialOdds(0.45, s),
+          success: { rental: r, recurring: moveIn.recurring, effects: moveIn.effects, outcome: `The roommate picked you! ${moveIn.outcome}` },
+          fail: { outcome: 'The roommate went with someone they clicked with more.' },
+        },
+        preview: true, // effects shown on the card only apply if the check passes
+      }
+    : { label: 'Sign lease', ...moveIn };
+  return {
+    id: 'rental-listing',
+    repeatable: true,
+    kicker: '🔑 For rent',
+    image: r.image,
+    prompt: `${r.type}, ${r.blurb}. ${r.roommate ? 'Apply to move in?' : 'Sign the lease?'}`,
+    rental: r,
+    details: [
+      ['Type', r.type],
+      ['Size', r.size],
+      ['Rent', `$${r.rent}/mo`],
+      ['Utilities', `$${r.utilities}/mo`],
+      ['Roommate', r.roommate ? 'Yes' : 'No'],
+      ['Deposit', `$${r.rent}`],
+    ],
+    left,
+    right: { label: 'Keep looking', busy: 1, outcome: 'You spent an hour touring it, then walked away.' },
+  };
+}
 
 const pick = (list, rng) => list[Math.floor(rng() * list.length)] ?? null;
 
@@ -2192,11 +2445,18 @@ export function drawCard(stats, lastId = null, rng = Math.random) {
   const queued = stats.commitments.find((c) => c.id === stats.queue[0]);
   if (queued) return reassessCard(queued);
 
+  const lodging = lodgingCard(stats, rng);
+  if (lodging) return lodging;
+
   if (hasCommitment(stats, 'therapy') && stats.day >= stats.nextTherapy) return THERAPY_SESSION;
 
   // House hunting: once the down payment is saved, listings show up often.
   if (!isHomeowner(stats) && stats.wealth >= DOWN_PAYMENT_GOAL && rng() < HOUSE_LISTING_CHANCE) {
     return houseCard(makeHouse(rng));
+  }
+  // Apartment hunting: once you have income and have cleared your debt.
+  if (rentalsUnlocked(stats) && lastId !== 'rental-listing' && rng() < RENTAL_LISTING_CHANCE) {
+    return rentalCard(makeRental(rng));
   }
 
   const eligible = (list) =>
@@ -2213,7 +2473,10 @@ export function drawCard(stats, lastId = null, rng = Math.random) {
     if (event) return event.build ? { ...event, ...event.build(stats, rng) } : event;
   }
   const deck = eligible(DECISIONS);
-  if (deck.length) return pickWeighted(deck, stats, rng);
+  if (deck.length) {
+    const card = pickWeighted(deck, stats, rng);
+    return card.build ? { ...card, ...card.build(stats, rng) } : card;
+  }
   // Only the last card is eligible: allow the repeat rather than ending the game.
   return DECISIONS.find((c) => c.id === lastId && (!c.when || c.when(stats))) ?? null;
 }
@@ -2302,6 +2565,16 @@ function dropCommitment(next, id) {
 // turn, used for anything that scales with stats (pay, effects functions).
 function applyResult(next, result, before, ledger, rng = Math.random) {
   if (!result) return;
+  if (result.lodge || result.rental || result.house) {
+    // Settling somewhere new ends couch surfing, the shelter, and chipping in at home.
+    next.flows = next.flows.filter((f) => f.tag !== 'lodging');
+    next.lodging = result.lodge && result.lodge !== 'home'
+      ? { kind: result.lodge, host: result.host ?? null, next: next.day + 7 }
+      : null;
+    next.housingPrompt = null;
+  }
+  if (result.stay) next.lodging = { ...next.lodging, next: next.day + 7 };
+  if (result.housingPrompt) next.housingPrompt = result.housingPrompt;
   const pay = resolve(result.pay, before);
   if (pay) {
     const amount = pay.min + Math.floor(rng() * ((pay.max - pay.min) / 10 + 1)) * 10;
@@ -2328,7 +2601,101 @@ function applyResult(next, result, before, ledger, rng = Math.random) {
   if (result.commit) startCommitment(next, result.commit);
   if (result.drop) dropCommitment(next, result.drop);
   if (result.reassess) next.queue = next.commitments.map((c) => c.id);
-  if (result.house) next.house = result.house;
+  if (result.rental) {
+    // Moving out: the allowance stops, rent and utilities start.
+    next.rental = { ...result.rental, behind: 0, since: next.day };
+    next.since.movedOut = next.since.movedOut ?? next.day;
+    next.flows = next.flows.filter((f) => f.tag !== 'allowance');
+  }
+  if (result.house) {
+    next.house = result.house;
+    // Buying ends any lease.
+    if (next.rental) {
+      next.rental = null;
+      next.flows = next.flows.filter((f) => f.tag !== 'rent' && f.tag !== 'home');
+    }
+  }
+}
+
+// Evicted: the lease ends and you move back in with your family.
+function evict(next) {
+  next.rental = null;
+  next.flows = next.flows.filter((f) => f.tag !== 'rent' && f.tag !== 'home');
+  next.health -= EVICTION_HEALTH_LOSS;
+  next.since.evicted = next.day;
+  next.housingPrompt = 'evicted';
+}
+
+// ---------- Where to stay after an eviction ----------
+// Each option costs something: home costs money, a couch costs social,
+// the shelter costs health.
+const HOSTS = ['Sam', 'Priya', 'Marcus', 'Jess', 'Leo', 'Ana'];
+export const SHELTER_HEALTH_PER_WEEK = -4;
+export const HOME_CHIP_IN = -25;
+
+function lodgingChoice(kind, s, host) {
+  const parent = s.household.single ? s.household.parent : 'your parents';
+  if (kind === 'home') {
+    return {
+      label: 'Move back home', lodge: 'home', effects: { social: -1 },
+      recurring: [{ label: 'Chipping in at home', amount: HOME_CHIP_IN, every: 'weekly', weekday: MON, tag: 'lodging' }],
+      outcome: `You move back in with ${parent}. This time they ask you to chip in $${-HOME_CHIP_IN} a week.`,
+    };
+  }
+  if (kind === 'couch') {
+    return {
+      label: 'Crash on a couch', lodge: 'couch', host,
+      note: '🛋️ Free, but -1 social each week you stay',
+      outcome: `${host} says you can crash on their couch for a while. Every week there costs a little goodwill.`,
+    };
+  }
+  return {
+    label: 'Go to a shelter', lodge: 'shelter',
+    recurring: [{ label: 'Shelter', stat: 'health', amount: SHELTER_HEALTH_PER_WEEK, every: 'weekly', afterDays: 7, tag: 'lodging' }],
+    outcome: 'A free bed at the shelter. It is loud, and you sleep badly.',
+  };
+}
+
+// The next housing card, if one is waiting: a where-to-stay prompt, or the
+// weekly check-in while you're on a couch or at the shelter.
+export function lodgingCard(s, rng = Math.random) {
+  const host = s.lodging?.host ?? HOSTS[Math.floor(rng() * HOSTS.length)];
+  const base = { repeatable: true, housing: true, kicker: '🏚️ Housing' };
+  if (s.housingPrompt === 'evicted') {
+    return {
+      ...base, id: 'evicted', image: '📦', days: 0,
+      prompt: 'You have been evicted. Where will you stay?',
+      left: lodgingChoice('home', s, host),
+      right: { label: 'Other options', note: '🛋️ A friend\'s couch or 🏚️ a shelter', housingPrompt: ['couch', 'shelter'], outcome: 'You start texting friends and looking up shelters.' },
+    };
+  }
+  if (Array.isArray(s.housingPrompt)) {
+    const [a, b] = s.housingPrompt;
+    return {
+      ...base, id: 'lodging-options', image: '🧳', days: 0,
+      prompt: a === 'couch' ? "Crash on a friend's couch, or check into a shelter?" : 'Where to next?',
+      left: lodgingChoice(a, s, host),
+      right: lodgingChoice(b, s, host),
+    };
+  }
+  if (s.lodging && s.day >= s.lodging.next) {
+    const weeks = Math.max(1, Math.round((s.day - (s.since.evicted ?? s.day)) / 7));
+    if (s.lodging.kind === 'couch') {
+      return {
+        ...base, id: 'couch-week', image: '🛋️',
+        prompt: `Week ${weeks} on ${host}'s couch. They're being nice, but it's wearing thin. Stay another week?`,
+        left: { label: 'Stay a week', stay: true, effects: { social: -1 }, outcome: `${host} sighs a little louder each morning.` },
+        right: { label: 'Move on', housingPrompt: ['home', 'shelter'], days: 0, outcome: `You thank ${host} and pack your bag.` },
+      };
+    }
+    return {
+      ...base, id: 'shelter-week', image: '🏚️',
+      prompt: `Week ${weeks} at the shelter. Stay another week?`,
+      left: { label: 'Stay', stay: true, note: `🏚️ ${SHELTER_HEALTH_PER_WEEK} health a week`, outcome: 'Another week of thin mattresses and early wake-ups.' },
+      right: { label: 'Move on', housingPrompt: ['home', 'couch'], days: 0, outcome: 'You pack your things.' },
+    };
+  }
+  return null;
 }
 
 // Picks one result from a check branch: a single result, or a list to choose from.
@@ -2358,12 +2725,14 @@ export function applyChoice(stats, card, side, rng = Math.random) {
   const gains = {};  // stat changes from commitments this turn: { label: { social: 1 } }
   let outcome = choice.outcome ?? '';
 
-  applyResult(next, choice, stats, ledger, rng);
+  // A roommate listing only takes effect if the check passes.
+  if (!choice.preview) applyResult(next, choice, stats, ledger, rng);
 
   const days = choice.days ?? card.days ?? DEFAULT_DAYS_PER_TURN;
 
   if (choice.apply) {
     const hired = rng() < jobChance(choice.apply, stats);
+    next.flags = next.flags.filter((f) => f !== 'job-lead'); // a job lead is used up by applying
     // The job starts once the application wait is over, so no pay during it.
     const job = { job: choice.apply.job, effects: choice.apply.effects, startsIn: days };
     if (hired) applyResult(next, job, stats, ledger, rng);
@@ -2375,12 +2744,16 @@ export function applyChoice(stats, card, side, rng = Math.random) {
     const result = pickResult(passed ? choice.check.success : choice.check.fail, stats, rng);
     applyResult(next, result, stats, ledger, rng);
     const label = choice.check.stat ? `${STAT_META[choice.check.stat].label} check` : 'Roll';
-    outcome = `${passed ? '✅' : '❌'} ${label} ${passed ? 'passed' : 'failed'}. ${result?.outcome ?? ''}`;
+    // Rare run-ins only mention themselves when they happen.
+    outcome = choice.check.rare
+      ? `${passed ? '✨ ' : ''}${result?.outcome ?? ''}`
+      : `${passed ? '✅' : '❌'} ${label} ${passed ? 'passed' : 'failed'}. ${result?.outcome ?? ''}`;
   }
 
   next.health = Math.max(0, Math.min(100, next.health));
   const healthBefore = next.health;
   const healthCauses = new Set();
+  let evicted = false;
   const busy = choice.busy ?? 0;
   for (let d = next.day; d < next.day + days; d++) {
     // Collectibles: each month held, value moves -5%…+15% (usually up).
@@ -2395,6 +2768,16 @@ export function applyChoice(stats, card, side, rng = Math.random) {
       if (flow.stat === 'wealth') {
         next.wealth += flow.amount;
         ledger[flow.label] = (ledger[flow.label] ?? 0) + flow.amount;
+        // Rent day: if paying it put you in the red, you're behind on rent.
+        if (flow.tag === 'rent' && next.rental) {
+          next.rental = { ...next.rental, behind: next.wealth < 0 ? next.rental.behind + 1 : 0 };
+          if (next.rental.behind > 0) healthCauses.add('🏚️ Behind on rent');
+          if (next.rental.behind >= EVICTION_MONTHS) {
+            evict(next);
+            evicted = true;
+            healthCauses.add('🏚️ Evicted');
+          }
+        }
       } else {
         next[flow.stat] += flow.amount;
         gains[flow.label] = gains[flow.label] ?? {};
@@ -2408,7 +2791,7 @@ export function applyChoice(stats, card, side, rng = Math.random) {
     const overcommitted = freeHours(next, d, busy) <= SLEEP_THRESHOLD;
     if (overcommitted) {
       next.health -= HEALTH_LOSS_PER_OVERCOMMITTED_DAY;
-      const lost = Math.min(next.social, SOCIAL_LOSS_PER_OVERCOMMITTED_DAY);
+      const lost = SOCIAL_LOSS_PER_OVERCOMMITTED_DAY; // social can go below zero
       next.social -= lost;
       if (lost) {
         gains.Overcommitted = gains.Overcommitted ?? {};
@@ -2429,12 +2812,15 @@ export function applyChoice(stats, card, side, rng = Math.random) {
   next.day += days;
   if (weekOf(next.day) !== next.eventPlan.week) next.eventPlan = planEvents(next.day, rng);
   next.flows = next.flows.filter((f) => f.endDay === null || f.endDay > next.day);
-  next.social = Math.max(0, next.social);
   next.skills = Math.max(0, next.skills);
   if (card.therapy) next.nextTherapy = next.day + THERAPY_EVERY;
 
   next.health = Math.max(0, Math.min(100, next.health));
   const healthDelta = Math.round(next.health) - Math.round(healthBefore);
+
+  if (evicted) {
+    outcome = `${outcome} 🏚️ Evicted after ${EVICTION_MONTHS} months behind on rent. -${EVICTION_HEALTH_LOSS} health.`.trim();
+  }
 
   const newGoals = GOALS.filter((g) => !next.goalsDone.includes(g.id) && g.isDone(next));
   next.goalsDone.push(...newGoals.map((g) => g.id));

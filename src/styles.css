@@ -534,3 +534,47 @@ button.cell:active { background: var(--panel-2); }
   .effects { font-size: 11px; }
   .vitals { gap: 6px; }
 }
+
+/* ---------- Meter feedback: floats, previews, time breakdown ---------- */
+.meter { position: relative; }
+.float {
+  position: absolute; left: 50%; bottom: 100%;
+  transform: translateX(-50%);
+  white-space: nowrap; pointer-events: none; z-index: 6;
+  font-family: var(--font-display); font-size: 18px; font-weight: 700; letter-spacing: 0.02em;
+  padding: 2px 8px; border-radius: 8px; border: 2px solid var(--ink); box-shadow: 2px 2px 0 var(--ink);
+  animation: float-up 1.9s ease-out forwards;
+}
+.float.neg { background: var(--danger); color: var(--ink); }
+.float.pos { background: var(--lime); color: var(--ink); }
+@keyframes float-up {
+  0% { opacity: 0; transform: translate(-50%, 8px) scale(0.8); }
+  12% { opacity: 1; transform: translate(-50%, -6px) scale(1.08); }
+  25% { transform: translate(-50%, -8px) scale(1); }
+  75% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -30px); }
+}
+.meter-tip {
+  position: absolute; left: 50%; bottom: calc(100% + 4px); transform: translateX(-50%);
+  white-space: nowrap; pointer-events: none; z-index: 5;
+  font-family: var(--font-display); font-size: 12px; font-weight: 600;
+  padding: 1px 6px; border-radius: 6px; background: var(--panel-2); border: 1.5px solid currentColor;
+}
+.meter-tip.neg { color: var(--danger); }
+.meter-tip.pos { color: var(--lime); }
+.seg i.cost { background: var(--danger) !important; animation: seg-blink 0.7s steps(2, jump-none) infinite; }
+.seg i.gain { background: var(--lime); opacity: 0.55; animation: seg-blink 0.7s steps(2, jump-none) infinite; }
+@keyframes seg-blink { 50% { opacity: 0.25; } }
+.meter-time .seg i.commit { background: var(--sleep); }
+.meter-time .seg i.job { background: #6fb7ff; }
+.meter-time.meter-bad .seg i.on { background: var(--danger); }
+.time-key { display: flex; gap: 6px; margin-top: 2px; font-size: 9px; color: var(--muted); white-space: nowrap; overflow: hidden; }
+.time-key span::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 2px; margin-right: 3px; vertical-align: 0; }
+.k-job::before { background: #6fb7ff; }
+.k-commit::before { background: var(--sleep); }
+.debt.rent .debt-track i { background: var(--warn); }
+@media (prefers-reduced-motion: reduce) {
+  .float { animation: float-fade 1.9s linear forwards; }
+  .seg i.cost, .seg i.gain { animation: none; }
+}
+@keyframes float-fade { 0%, 75% { opacity: 1; } 100% { opacity: 0; } }

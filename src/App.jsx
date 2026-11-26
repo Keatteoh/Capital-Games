@@ -7,6 +7,13 @@ import {
   houseCard,
   reassessCard,
   makeHouse,
+  rentalCard,
+  makeRental,
+  EVICTION_MONTHS,
+  timeBreakdown,
+  timePreview,
+  healthPreview,
+  committedHoursPerWeek,
   STARTING_DEBT,
   DEBT_HEALTH_LOSS_PER_WEEK,
   isIncomeStream,
@@ -15,8 +22,6 @@ import {
   WEEKDAYS,
   dayOfWeek,
   isUnderSlept,
-  freeHours,
-  FREE_HOURS_PER_DAY,
   createInitialStats,
   currentGoal,
   drawCard,
@@ -40,18 +45,95 @@ function Cell({ label, value, onClick, tone }) {
   );
 }
 
-// A stat with a 10-segment bar, used along the bottom.
-function Meter({ label, value, display, max, tone }) {
+// A number that rises and fades over a meter after a choice, e.g. "-3h" or "+2".
+function Float({ float }) {
+  if (!float?.text) return null;
+  return <span key={float.key} className={`float ${float.tone}`} aria-hidden="true">{float.text}</span>;
+}
+
+// A stat with a 10-segment bar, used along the bottom. `preview` is the change the
+// choice being considered would make: those segments blink.
+function Meter({ label, value, display, max, tone, preview, float }) {
+  const per = max / 10;
   const on = Math.round(Math.max(0, Math.min(1, value / max)) * 10);
+  const change = preview ? Math.max(1, Math.round(Math.abs(preview) / per)) : 0;
+  const cls = (i) => {
+    if (preview < 0 && i < on && i >= on - change) return 'on cost';
+    if (preview > 0 && i >= on && i < on + change) return 'gain';
+    return i < on ? 'on' : '';
+  };
   return (
     <div className={`meter ${tone ? `meter-${tone}` : ''}`}>
+      <Float float={float} />
+      {preview ? <span className={`meter-tip ${preview < 0 ? 'neg' : 'pos'}`}>{preview > 0 ? '+' : ''}{preview} {label.toLowerCase()}</span> : null}
       <div className="meter-row">
         <span>{label}</span>
         <b className="num">{display}</b>
       </div>
       <div className="seg" aria-hidden="true">
-        {Array.from({ length: 10 }, (_, i) => <i key={i} className={i < on ? 'on' : ''} />)}
+        {Array.from({ length: 10 }, (_, i) => <i key={i} className={cls(i)} />)}
       </div>
+    </div>
+  );
+}
+
+// Today's hours, one segment each: free time first, then commitments and job.
+// A choice being considered blinks the hours it would spend (or free up).
+function TimeMeter({ stats, preview, float }) {
+  const { job, commit, free } = timeBreakdown(stats);
+  const left = Math.max(0, free);
+  const change = preview ? Math.min(10, Math.abs(preview.hours)) : 0;
+  const cls = (i) => {
+    if (i < left) return preview?.hours < 0 && i >= left - change ? 'on cost' : 'on';
+    if (preview?.hours > 0 && i < left + change) return 'gain';
+    if (i < left + commit) return 'commit';
+    if (i < left + commit + job) return 'job';
+    return 'job';
+  };
+  return (
+    <div className={`meter meter-time ${free <= 1 ? 'meter-bad' : ''}`}>
+      <Float float={float} />
+      {preview ? <span className={`meter-tip ${preview.hours < 0 ? 'neg' : 'pos'}`}>{preview.text}</span> : null}
+      <div className="meter-row">
+        <span>Time</span>
+        <b className="num">{left}h</b>
+      </div>
+      <div className="seg" aria-hidden="true">
+        {Array.from({ length: 10 }, (_, i) => <i key={i} className={cls(i)} />)}
+      </div>
+      <div className="time-key" aria-hidden="true">
+        {job > 0 && <span className="k-job">job {job}h</span>}
+        {commit > 0 && <span className="k-commit">plans {commit}h</span>}
+      </div>
+    </div>
+  );
+}
+
+// Floating numbers for the meters after a turn.
+function turnFloats(before, after, choice, turn) {
+  const f = (d, unit = '') => (d ? { text: `${d > 0 ? '+' : ''}${d}${unit}`, tone: d > 0 ? 'pos' : 'neg', key: turn } : null);
+  const weekly = committedHoursPerWeek(after) - committedHoursPerWeek(before);
+  const busy = choice.busy ?? 0;
+  const parts = [];
+  if (busy) parts.push(`${busy > 0 ? '-' : '+'}${Math.abs(busy)}h today`);
+  if (weekly) parts.push(`${weekly > 0 ? '-' : '+'}${Math.abs(weekly)}h/wk`);
+  return {
+    health: f(Math.round(after.health) - Math.round(before.health)),
+    social: f(after.social - before.social),
+    skills: f(after.skills - before.skills),
+    time: parts.length ? { text: parts.join(' '), tone: busy > 0 || weekly > 0 ? 'neg' : 'pos', key: turn } : null,
+  };
+}
+
+// Behind on rent: how close you are to eviction.
+function RentBar({ rental }) {
+  return (
+    <div className="debt rent" role="alert">
+      <div className="debt-top">
+        <span>🏚️ Behind on rent: {rental.behind} of {EVICTION_MONTHS} months</span>
+        <b>Eviction: -40 health</b>
+      </div>
+      <div className="debt-track"><i style={{ width: `${(rental.behind / EVICTION_MONTHS) * 100}%` }} /></div>
     </div>
   );
 }
@@ -140,6 +222,13 @@ function Intro({ stats, onStart }) {
 
       <h3>You start with</h3>
       <ul className="intro-list">
+        <li>
+          <span>
+            Living with
+            <small className="intro-note">{stats.household.single ? `A single parent can't give you an allowance, and ${stats.household.parent === 'Mom' ? 'she' : 'he'} may need help with bills` : 'They give you a small allowance until you move out'}</small>
+          </span>
+          <b>{stats.household.label}</b>
+        </li>
         <li><span>Debt</span><b className="num neg">{money(stats.wealth)}</b></li>
         {stats.flows.map((f) => (
           <li key={f.id}>
@@ -157,7 +246,7 @@ function Intro({ stats, onStart }) {
         <li>
           <span>
             Social
-            <small className="intro-note">Better odds in social and job situations, and less likely to be laid off</small>
+            <small className="intro-note">Better odds in social and job situations, and less likely to be laid off. Can drop below zero</small>
           </span>
           <b className="num">{stats.social}</b>
         </li>
@@ -193,20 +282,36 @@ function newGame() {
   if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('stress')) {
     game.status = 'playing';
     Object.assign(stats, { wealth: -19, health: 40, day: 8 });
+    stats.flows.push({ id: 999, label: 'Supermarket job', kind: 'job', stat: 'wealth', amount: 150, every: 'weekly',
+      weekday: 4, activeFrom: 1, hours: 5, startDay: 5, endDay: null, chance: null, commitmentId: null, tag: null });
+    stats.commitments.push({ id: 'gym', label: 'Gym', image: '🏋️', hours: 3, weekdays: [0] });
     game.last = {
       outcome: 'You joined the gym and recognise a few regulars already.',
       ledger: { 'Allowance from parents': 3, 'Cost of living': -20, 'Gym membership': -20 },
       goalMsg: '',
       healthDelta: -15,
       healthCauses: ['😴 Overcommitted', '💳 In debt'],
+      floats: {
+        time: { text: '-3h/wk', tone: 'neg', key: 1 },
+        health: { text: '-15', tone: 'neg', key: 1 },
+        social: { text: '+1', tone: 'pos', key: 1 },
+      },
     };
   }
   // Dev only: ?card=<id> starts on that card, e.g. ?card=party.
   const forced = import.meta.env.DEV && new URLSearchParams(window.location.search).get('card');
   if (forced) game.status = 'playing';
   if (forced === 'house') game.card = houseCard(makeHouse());
+  else if (forced === 'rental') game.card = rentalCard(makeRental());
+  else if (forced === 'evicted') {
+    stats.housingPrompt = 'evicted';
+    game.card = drawCard(stats);
+  }
   else if (forced === 'reassess') game.card = reassessCard({ id: 'guitar', label: 'Guitar', image: '🎸', hours: 3, weekdays: [1], keepPrompt: 'Keep up the guitar lessons?' });
-  else if (forced) game.card = [...DECISIONS, ...EVENTS].find((c) => c.id === forced) ?? game.card;
+  else if (forced) {
+    const c = [...DECISIONS, ...EVENTS].find((x) => x.id === forced);
+    if (c) game.card = c.build ? { ...c, ...c.build(stats, Math.random) } : c;
+  }
   return game;
 }
 
@@ -215,6 +320,7 @@ export default function App() {
   const [showFlows, setShowFlows] = useState(false);
   const [showToast, setShowToast] = useState(true); // only renders once there's a `last`
   const [showHint, setShowHint] = useState(false);
+  const [preview, setPreview] = useState(null); // 'left' | 'right' while a choice is being considered
   const { stats, card, last, status } = game;
   const hideToast = useCallback(() => setShowToast(false), []);
 
@@ -234,11 +340,13 @@ export default function App() {
         goalMsg,
         healthDelta: result.healthDelta,
         healthCauses: result.healthCauses,
+        floats: turnFloats(stats, result.stats, card[side], game.turn + 1),
       },
       status: result.gameOver ? 'lost' : allDone ? 'won' : !nextCard ? 'out' : 'playing',
       lostTo: result.gameOver,
     });
     setShowToast(true);
+    setPreview(null);
   };
 
   const restart = () => {
@@ -254,6 +362,10 @@ export default function App() {
   const lowHealth = stats.health < LOW_HEALTH;
   const playing = status === 'playing';
   const start = () => setGame((g) => ({ ...g, status: 'playing' }));
+  const considered = playing && preview ? card[preview] : null;
+  const timePrev = considered ? timePreview(stats, card, considered) : null;
+  const healthPrev = considered ? Math.round(healthPreview(stats, card, considered)) : 0;
+  const floats = last?.floats ?? {};
 
   return (
     <div className="app">
@@ -269,6 +381,18 @@ export default function App() {
 
         {showFlows && (
           <div className="flows" onClick={() => setShowFlows(false)}>
+            <h3>Home</h3>
+            <p className="muted">
+              {stats.house
+                ? `${stats.house.image} Your ${stats.house.type.toLowerCase()}`
+                : stats.rental
+                  ? `${stats.rental.image} ${stats.rental.type}${stats.rental.roommate ? ' (with a roommate)' : ''}`
+                  : stats.lodging?.kind === 'couch'
+                    ? `🛋️ On ${stats.lodging.host}'s couch`
+                    : stats.lodging?.kind === 'shelter'
+                      ? '🏚️ At a shelter'
+                      : `🏠 Living with ${stats.household.single ? stats.household.parent : 'your parents'}`}
+            </p>
             <h3>Recurring</h3>
             {stats.flows.length === 0 ? (
               <p className="muted">No regular income or expenses.</p>
@@ -325,6 +449,7 @@ export default function App() {
       {playing && (
         <div className="status-strip">
           {inDebt && <DebtBar wealth={stats.wealth} />}
+          {stats.rental?.behind > 0 && <RentBar rental={stats.rental} />}
           {goal && (
             <button type="button" className="quest" onClick={() => setShowHint((v) => !v)}>
               <span className="quest-badge">Quest {GOALS.indexOf(goal) + 1}/{GOALS.length}</span>
@@ -346,7 +471,7 @@ export default function App() {
           <Intro stats={stats} onStart={start} />
         ) : playing ? (
           <>
-            <SwipeCard key={game.turn} decision={card} stats={stats} onChoose={choose} />
+            <SwipeCard key={game.turn} decision={card} stats={stats} onChoose={choose} onPreview={setPreview} />
             {last && showToast && <Toast last={last} onClose={hideToast} />}
           </>
         ) : (
@@ -358,8 +483,8 @@ export default function App() {
             </h2>
             {status === 'lost' && (
               <p>
-                {stats.wealth < 0 ? 'Debt stress' : 'Overcommitting'} wore your health down to 0 on day{' '}
-                {stats.day}.
+                {last?.healthCauses?.length ? last.healthCauses.join(' + ') : stats.wealth < 0 ? 'Debt stress' : 'Overcommitting'}{' '}
+                wore your health down to 0 on day {stats.day}.
               </p>
             )}
             {last && <p className="muted">{last.outcome}</p>}
@@ -380,22 +505,19 @@ export default function App() {
       </main>
 
       <footer className="vitals">
-        <Meter label="Social" value={stats.social} display={STAT_META.social.format(stats.social)} max={10} />
-        <Meter label="Skills" value={stats.skills} display={STAT_META.skills.format(stats.skills)} max={10} />
+        <Meter label="Social" value={stats.social} display={STAT_META.social.format(stats.social)} max={10}
+          tone={stats.social < 0 ? 'bad' : null} float={floats.social} />
+        <Meter label="Skills" value={stats.skills} display={STAT_META.skills.format(stats.skills)} max={10} float={floats.skills} />
         <Meter
           label="Health"
           value={stats.health}
           display={STAT_META.health.format(stats.health)}
           max={100}
           tone={lowHealth ? 'bad' : underSlept ? 'warn' : null}
+          preview={healthPrev}
+          float={floats.health}
         />
-        <Meter
-          label="Time"
-          value={Math.max(0, freeHours(stats))}
-          display={`${Math.max(0, freeHours(stats))}h`}
-          max={FREE_HOURS_PER_DAY}
-          tone={underSlept ? 'bad' : null}
-        />
+        <TimeMeter stats={stats} preview={timePrev} float={floats.time} />
       </footer>
     </div>
   );
