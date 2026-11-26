@@ -329,8 +329,8 @@ button.cell:active { background: var(--panel-2); }
   pointer-events: none;
   box-shadow: var(--pop);
 }
-.stamp-left { right: 16px; background: var(--accent); color: #fff; transform: rotate(10deg); }
-.stamp-right { left: 16px; background: var(--panel); color: var(--fg); transform: rotate(-10deg); }
+.stamp-yes { left: 16px; background: var(--accent); color: #fff; transform: rotate(-10deg); }
+.stamp-no { right: 16px; background: var(--panel); color: var(--fg); transform: rotate(10deg); }
 
 /* ---------- Choices ---------- */
 .split {
@@ -353,8 +353,8 @@ button.cell:active { background: var(--panel-2); }
   cursor: pointer;
   transition: filter 0.1s;
 }
-.choice-left { background: var(--accent); color: #fff; border-right: var(--outline); }
-.choice-right { background: var(--panel); color: var(--fg); align-items: flex-end; text-align: right; }
+.choice-no { background: var(--panel); color: var(--fg); border-right: var(--outline); }
+.choice-yes { background: var(--accent); color: #fff; align-items: flex-end; text-align: right; }
 .choice:active, .choice.active { filter: brightness(1.15); }
 .choice:focus-visible { outline: 3px solid var(--lime); outline-offset: -6px; }
 .choice strong {
@@ -365,9 +365,9 @@ button.cell:active { background: var(--panel-2); }
   text-transform: uppercase;
 }
 .effects { list-style: none; margin: 2px 0 0; padding: 0; font-size: 12px; font-weight: 600; line-height: 1.35; }
-.choice-left .effects .pos { color: #fff; }
-.choice-left .effects .neg { color: #ffe0ef; }
-.choice-left .effects li { opacity: 0.95; }
+.choice-yes .effects .pos { color: #fff; }
+.choice-yes .effects .neg { color: #ffe0ef; }
+.choice-yes .effects li { opacity: 0.95; }
 
 /* ---------- Vitals ---------- */
 .vitals {

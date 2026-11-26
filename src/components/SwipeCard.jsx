@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { STAT_META, money, commitmentDays, overcommitPreview, HEALTH_LOSS_PER_OVERCOMMITTED_DAY, WEEKDAYS, PAYDAY, dayOfWeek, formatDelta, formatFlow, jobChance, jobPay, choiceChance, resolve, netAfterRental, EVICTION_MONTHS } from '../decisions.js';
 
+// Swipe right to accept, left to decline. In the card data, `left` is the accept
+// option and `right` the decline, so each screen side maps to the other key.
+const CHOICE_FOR_SIDE = { right: 'left', left: 'right' };
+
 const SWIPE_THRESHOLD = 90; // px of drag needed to commit a choice
 const DRAG_START = 8;       // px of movement before a touch counts as a drag (vs a tap)
 
@@ -96,7 +100,7 @@ export default function SwipeCard({ decision, stats, onChoose, onPreview }) {
     if (leaving) return;
     setLeaving(side);
     setDx(side === 'left' ? -window.innerWidth : window.innerWidth);
-    setTimeout(() => onChoose(side), 250);
+    setTimeout(() => onChoose(CHOICE_FOR_SIDE[side]), 250);
   };
 
   // Keyboard support for desktop testing.
@@ -137,7 +141,7 @@ export default function SwipeCard({ decision, stats, onChoose, onPreview }) {
   const activeSide = dx < -10 ? 'left' : dx > 10 ? 'right' : null;
   // Tell the meters which choice is being considered, so they can preview its cost.
   const considering = activeSide ?? hover;
-  useEffect(() => { onPreview?.(considering); }, [considering, onPreview]);
+  useEffect(() => { onPreview?.(considering ? CHOICE_FOR_SIDE[considering] : null); }, [considering, onPreview]);
   useEffect(() => () => onPreview?.(null), [onPreview]);
 
   const isImageUrl = /[./]/.test(decision.image);
@@ -155,10 +159,10 @@ export default function SwipeCard({ decision, stats, onChoose, onPreview }) {
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
         >
-          <div className="stamp stamp-left" style={{ opacity: activeSide === 'left' ? progress : 0 }}>
+          <div className="stamp stamp-yes" style={{ opacity: activeSide === 'right' ? progress : 0 }}>
             {decision.left.label}
           </div>
-          <div className="stamp stamp-right" style={{ opacity: activeSide === 'right' ? progress : 0 }}>
+          <div className="stamp stamp-no" style={{ opacity: activeSide === 'left' ? progress : 0 }}>
             {decision.right.label}
           </div>
 
@@ -197,7 +201,7 @@ export default function SwipeCard({ decision, stats, onChoose, onPreview }) {
           <button
             key={side}
             type="button"
-            className={`choice choice-${side} ${activeSide === side ? 'active' : ''}`}
+            className={`choice ${side === 'right' ? 'choice-yes' : 'choice-no'} ${activeSide === side ? 'active' : ''}`}
             onClick={() => !dragging && commit(side)}
             onPointerEnter={(e) => e.pointerType === 'mouse' && setHover(side)}
             onPointerLeave={() => setHover(null)}
@@ -205,9 +209,9 @@ export default function SwipeCard({ decision, stats, onChoose, onPreview }) {
             onBlur={() => setHover(null)}
           >
             <strong>
-              {side === 'left' ? `← ${decision.left.label}` : `${decision.right.label} →`}
+              {side === 'left' ? `← ${decision.right.label}` : `${decision.left.label} →`}
             </strong>
-            <Effects choice={decision[side]} stats={stats} card={decision} side={side} />
+            <Effects choice={decision[CHOICE_FOR_SIDE[side]]} stats={stats} card={decision} side={CHOICE_FOR_SIDE[side]} />
           </button>
         ))}
       </div>

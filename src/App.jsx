@@ -215,7 +215,7 @@ function Intro({ stats, onStart }) {
           {character.emoji}
         </span>
         <div>
-          <h2>New game</h2>
+          <h2>Hello you</h2>
           <p className="muted">Age {character.age}</p>
         </div>
       </div>

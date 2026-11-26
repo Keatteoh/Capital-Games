@@ -57,6 +57,16 @@ export const THERAPY_EVERY = 30; // days between therapy sessions
 // BIG_EXPENSES_AFTER swipes, so the early game only throws small costs at you.
 export const BIG_EXPENSES_AFTER = 20;
 
+// Easing in: the first 10–12 swipes only draw low-stakes everyday cards (each
+// game picks its own number), and surprise events start around swipe 13–16.
+export const LOW_STAKES_SWIPES = [10, 12];
+export const EVENTS_FROM_SWIPE = [13, 16];
+const LOW_STAKES = new Set([
+  'gym', 'bike', 'hobby-guitar', 'hobby-soccer', 'hobby-baking', 'book-club', 'volunteer-oldfolks',
+  'foodbank', 'food-stop', 'meal-prep', 'family-dinner', 'sell-clothes', 'coupons', 'library-book',
+  'spare-ticket', 'sneaker-sale', 'budget-app', 'phone-plan',
+]);
+
 export const DOWN_PAYMENT_GOAL = 10000;  // house listings appear once you have this much
 const HOUSE_LISTING_CHANCE = 0.5;        // per turn, while saving is done and you're house hunting
 
@@ -263,7 +273,7 @@ const CHARACTERS = {
 
 export function makeCharacter(rng = Math.random) {
   const age = 16 + Math.floor(rng() * 40); // 16–55
-  const group = age >= 55 ? CHARACTERS.older : CHARACTERS.younger;
+  const group = age >= 50 ? CHARACTERS.older : CHARACTERS.younger;
   const c = group[Math.floor(rng() * group.length)];
   const tone = SKIN_TONES[Math.floor(rng() * SKIN_TONES.length)];
   return { emoji: c.base + tone, gender: c.gender, age };
@@ -297,7 +307,7 @@ export function createInitialStats() {
     lodging: null,      // after an eviction: { kind: 'couch' | 'shelter', host, next } (next = day of the weekly check-in)
     housingPrompt: null, // where-to-stay card waiting to be shown: 'evicted' or a pair of options
     flows,
-    flags: [],          // things the player has learned/unlocked, e.g. 'chainsaw'
+    flags: [],          // things the player has learned/unlocked, e.g. 'power-tools'
     commitments: [],    // ongoing hobbies etc.: { id, label, image, hours, keepPrompt, dropLabel }
     queue: [],          // commitment ids waiting for a "keep or drop?" card (from therapy)
     nextTherapy: null,  // day the next therapy session is due
@@ -305,6 +315,9 @@ export function createInitialStats() {
     items: [],          // collectibles you're holding: { id, label, image, value, since }
     since: {},          // day each flag was set / commitment started, for side-quest timing
     eventPlan: planEvents(1), // { week, days }: which days this week get a surprise event
+    lowStakesUntil: randomInt(...LOW_STAKES_SWIPES), // swipes of everyday cards only
+    eventsFrom: randomInt(...EVENTS_FROM_SWIPE),     // swipe when surprise events can start
+    hadEvent: false,    // the first surprise is guaranteed on swipe `eventsFrom`
     usedCards: [],      // one-off cards already seen
     goalsDone: [],
   };
@@ -356,7 +369,7 @@ export const currentGoal = (s) => GOALS.find((g) => !s.goalsDone.includes(g.id))
 // Choice fields:
 //   effects:   one-time changes, e.g. { wealth: -100, skills: 1 }, or a function of stats
 //   recurring: repeating cash flows, e.g. { label: 'Gym', amount: -20, every: 'monthly' }
-//   setFlags:  flags to unlock other cards, e.g. ['chainsaw']
+//   setFlags:  flags to unlock other cards, e.g. ['power-tools']
 //   apply:     a job application; `chance(stats)` is the success probability
 //   check:     a dice roll, e.g. a social check:
 //              { stat: 'social', chance(stats), success: result | [results], fail: result | [results] }
@@ -444,14 +457,14 @@ function foodStop(s, rng = Math.random) {
 export const DECISIONS = [
   // --- Upskilling ---
   {
-    id: 'chainsaw',
-    image: '🪚',
-    prompt: 'Should I learn how to use a chainsaw?',
+    id: 'power-tools',
+    image: '🧰',
+    prompt: 'The hardware store runs a $100 power tools workshop this week. Sign up?',
     left: {
-      label: 'Learn',
+      label: 'Sign up',
       effects: { wealth: -100, skills: 1 },
-      setFlags: ['chainsaw'],
-      outcome: 'You paid for a safety course. Landscaping jobs are now open to you.',
+      setFlags: ['power-tools'],
+      outcome: 'You finished the workshop and earned your safety certificate. Landscaping jobs are now open to you.',
     },
     right: {
       label: 'Skip',
@@ -541,8 +554,8 @@ export const DECISIONS = [
     id: 'apply-landscaping',
     repeatable: true,
     image: '🌲',
-    prompt: 'A landscaping crew needs someone who can use a chainsaw. Apply?',
-    when: (s) => !hasJob(s) && hasFlag(s, 'chainsaw'),
+    prompt: 'A landscaping crew needs someone who can handle power tools. Apply?',
+    when: (s) => !hasJob(s) && hasFlag(s, 'power-tools'),
     left: {
       label: 'Apply',
       days: 14,
@@ -550,7 +563,7 @@ export const DECISIONS = [
       apply: {
         chance: (s) => clampChance(0.5 + 0.1 * s.skills),
         job: { label: 'Landscaping job', amount: 220, every: 'weekly', skillPay: true, hours: 7 },
-        success: 'The chainsaw course paid off. You start Monday!',
+        success: 'The power tools workshop paid off. You start Monday!',
         fail: 'The crew filled the spot before you heard back.',
       },
     },
@@ -805,7 +818,7 @@ export const DECISIONS = [
     id: 'family-dinner',
     repeatable: true,
     image: '🍝',
-    prompt: 'Your family invites you over for dinner tonight.',
+    prompt: 'Your aunt invites you over for dinner tonight.',
     left: { label: 'Go', busy: 3, effects: { social: 1, wealth: 10 }, outcome: 'Good food, and they sent you home with leftovers.' },
     right: { label: 'Too tired', outcome: 'You promised to come next time.' },
   },
@@ -2467,12 +2480,15 @@ export function drawCard(stats, lastId = null, rng = Math.random) {
       (!c.when || c.when(stats)));
 
   // A planned day that a multi-day card skipped over still fires, on the next swipe that week.
-  if (stats.eventPlan.days.some((d) => d <= stats.day)) {
+  // The first surprise always lands on swipe `eventsFrom` (13–16).
+  const firstSurprise = !stats.hadEvent && stats.swipes + 1 >= stats.eventsFrom;
+  if (stats.swipes + 1 >= stats.eventsFrom && (firstSurprise || stats.eventPlan.days.some((d) => d <= stats.day))) {
     const event = pickWeighted(eligible(EVENTS), stats, rng);
     // Some events fill in details when drawn (which item, how much).
     if (event) return event.build ? { ...event, ...event.build(stats, rng) } : event;
   }
-  const deck = eligible(DECISIONS);
+  const early = stats.swipes < stats.lowStakesUntil;
+  const deck = eligible(early ? DECISIONS.filter((c) => LOW_STAKES.has(c.id)) : DECISIONS);
   if (deck.length) {
     const card = pickWeighted(deck, stats, rng);
     return card.build ? { ...card, ...card.build(stats, rng) } : card;
@@ -2805,6 +2821,7 @@ export function applyChoice(stats, card, side, rng = Math.random) {
     next.health = Math.max(0, Math.min(100, +(next.health + rate / 7).toFixed(3)));
   }
   if (card.event) {
+    next.hadEvent = true;
     const due = next.eventPlan.days.filter((d) => d <= stats.day);
     const used = Math.min(...due);
     next.eventPlan = { ...next.eventPlan, days: next.eventPlan.days.filter((d) => d !== used) };
